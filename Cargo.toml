@@ -1,0 +1,11 @@
+[workspace]
+resolver = "3"
+members = ["crates/anchorwatch-core", "crates/anchorwatch-cli"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.91"
+
+[workspace.dependencies]
+anchorwatch-core = { path = "crates/anchorwatch-core" }
