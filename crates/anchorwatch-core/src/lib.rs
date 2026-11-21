@@ -14,5 +14,14 @@
 //! pass over the same bundle with the same pinned date always
 //! produces the same result.
 
+pub mod auditor;
+pub mod bundle;
+pub mod frontmatter;
+pub mod json;
+pub mod queue;
+pub mod sha256;
+pub mod time;
+pub mod upkeep;
+
 /// The version of the upkeep contract this build implements.
 pub const CONTRACT_VERSION: &str = "0.1.0";
