@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anchorwatch_core::auditor::StubAuditor;
-use anchorwatch_core::upkeep::{run_pass, Mode};
+use anchorwatch_core::upkeep::{Mode, run_pass};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
