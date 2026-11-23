@@ -10,12 +10,14 @@
 //! bundle and the same pinned as-of instant.
 //!
 //! Until the real auditor publishes its interface, the engine builds
-//! against [`StubAuditor`], which implements only the currency and
-//! supersession calls for the dogfood fixture, exactly as the design
+//! against [`StubAuditor`], which implements the four calls in their
+//! mechanical form for the dogfood fixture, exactly as the design
 //! record sanctions. The stub is a test instrument for the upkeep
 //! contract, never a second auditor, and it is removed when the real
-//! interface lands. Freshness and provenance report as uncovered, and
-//! the pass says so in its report rather than pretending otherwise.
+//! interface lands. Rule identifiers are stable across both: AW-CUR
+//! for currency data (carried as entries, not findings), AW-SUP for
+//! supersession integrity, AW-FRE for freshness, and AW-PRO for
+//! provenance.
 
 use std::collections::BTreeMap;
 
@@ -102,6 +104,20 @@ pub struct CurrencyEntry {
     pub tier: Tier,
 }
 
+/// The provenance call's per-concept result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvenanceEntry {
+    /// The concept path.
+    pub concept: String,
+    /// Whether the concept carries a `sources` family at all.
+    pub has_sources: bool,
+    /// Sources whose resource is a path inside the bundle.
+    pub local_sources: usize,
+    /// Local sources that do not resolve, or whose recorded content
+    /// hash has drifted. Each one also raises a finding.
+    pub unresolved: usize,
+}
+
 /// The auditor's report for one pass over one bundle.
 #[derive(Debug, Clone)]
 pub struct AuditorReport {
@@ -113,6 +129,8 @@ pub struct AuditorReport {
     pub as_of: String,
     /// Currency results, in concept path order.
     pub currency: Vec<CurrencyEntry>,
+    /// Provenance results, in concept path order.
+    pub provenance: Vec<ProvenanceEntry>,
     /// All findings, in rule and path order.
     pub findings: Vec<Finding>,
     /// Which of the four calls this auditor actually implements.
@@ -128,9 +146,9 @@ pub trait Auditor {
     fn audit(&self, bundle: &Bundle, as_of: &str) -> AuditorReport;
 }
 
-/// The sanctioned stub auditor. Implements currency and supersession
-/// only. See the module documentation before relying on it for
-/// anything beyond the upkeep contract's own tests.
+/// The sanctioned stub auditor. Implements the four calls in their
+/// mechanical form. See the module documentation before relying on
+/// it for anything beyond the upkeep contract's own tests.
 pub struct StubAuditor;
 
 impl Auditor for StubAuditor {
@@ -140,7 +158,9 @@ impl Auditor for StubAuditor {
 
     fn audit(&self, bundle: &Bundle, as_of: &str) -> AuditorReport {
         let mut currency = Vec::new();
+        let mut provenance = Vec::new();
         let mut findings = Vec::new();
+        let as_of_secs = parse_timestamp(as_of);
         let deprecated: Vec<&str> = bundle
             .concepts()
             .filter(|c| c.frontmatter.status.as_deref() == Some("deprecated"))
@@ -178,6 +198,88 @@ impl Auditor for StubAuditor {
                 current_events: current,
                 lapsed_events: lapsed,
                 tier: best,
+            });
+            // Freshness. A malformed review date is a defect, never
+            // fresh; a passed date is a lapse signal for the queue.
+            if let Some(raw) = fm.stale_after.as_deref() {
+                match parse_timestamp(raw) {
+                    None => findings.push(Finding {
+                        rule_id: "AW-FRE-02".to_string(),
+                        severity: Severity::Error,
+                        concept: concept.relpath.clone(),
+                        evidence: vec![("stale_after".to_string(), raw.to_string())],
+                    }),
+                    Some(stale_secs) => {
+                        if let Some(now) = as_of_secs {
+                            if now > stale_secs {
+                                findings.push(Finding {
+                                    rule_id: "AW-FRE-01".to_string(),
+                                    severity: Severity::Warning,
+                                    concept: concept.relpath.clone(),
+                                    evidence: vec![
+                                        ("stale_after".to_string(), raw.to_string()),
+                                        ("as_of".to_string(), as_of.to_string()),
+                                    ],
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            // Provenance. Absence of the sources family is data, not
+            // a finding: a concept that declares no sources has no
+            // missing source. A declared local source that does not
+            // resolve, or whose recorded hash has drifted, is one.
+            let mut local_sources = 0usize;
+            let mut unresolved = 0usize;
+            for entry in &fm.sources {
+                let Some(resource) = entry.resource.as_deref() else {
+                    continue;
+                };
+                if resource.starts_with("http://")
+                    || resource.starts_with("https://")
+                    || resource.contains(' ')
+                {
+                    continue;
+                }
+                local_sources += 1;
+                match bundle.file(resource) {
+                    None => {
+                        unresolved += 1;
+                        findings.push(Finding {
+                            rule_id: "AW-PRO-01".to_string(),
+                            severity: Severity::Error,
+                            concept: concept.relpath.clone(),
+                            evidence: vec![(
+                                "resource".to_string(),
+                                resource.to_string(),
+                            )],
+                        });
+                    }
+                    Some(target) => {
+                        if let Some(recorded) = entry.content_hash.as_deref() {
+                            if recorded != target.hash {
+                                unresolved += 1;
+                                findings.push(Finding {
+                                    rule_id: "AW-PRO-02".to_string(),
+                                    severity: Severity::Error,
+                                    concept: concept.relpath.clone(),
+                                    evidence: vec![
+                                        ("resource".to_string(), resource.to_string()),
+                                        ("recorded_hash".to_string(), recorded.to_string()),
+                                        ("actual_hash".to_string(), target.hash.clone()),
+                                    ],
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            provenance.push(ProvenanceEntry {
+                concept: concept.relpath.clone(),
+                has_sources: fm.has_sources,
+                local_sources,
+                unresolved,
             });
             // Supersession integrity for declared chains.
             if fm.status.as_deref() == Some("deprecated") {
@@ -250,12 +352,13 @@ impl Auditor for StubAuditor {
             schema_version: AUDITOR_SCHEMA_VERSION.to_string(),
             as_of: as_of.to_string(),
             currency,
+            provenance,
             findings,
             coverage: vec![
                 ("currency".to_string(), true),
                 ("supersession".to_string(), true),
-                ("freshness".to_string(), false),
-                ("provenance".to_string(), false),
+                ("freshness".to_string(), true),
+                ("provenance".to_string(), true),
             ],
         }
     }
@@ -314,6 +417,48 @@ mod tests {
         assert_eq!(report.currency[0].current_events, 1);
         assert_eq!(report.currency[0].lapsed_events, 1);
         assert_eq!(report.currency[0].tier, Tier::MachineConfirmed);
+    }
+
+    #[test]
+    fn freshness_flags_passed_and_malformed_review_dates() {
+        let (_dir, bundle) = fixture("freshness", &[
+            (
+                "a.md",
+                "---\ntype: Note\nstale_after: 2026-11-01\n---\nbody\n",
+            ),
+            (
+                "b.md",
+                "---\ntype: Note\nstale_after: next Tuesday\n---\nbody\n",
+            ),
+            (
+                "c.md",
+                "---\ntype: Note\nstale_after: 2027-01-01\n---\nbody\n",
+            ),
+        ]);
+        let report = StubAuditor.audit(&bundle, "2026-11-21T00:00:00Z");
+        let ids: Vec<&str> = report
+            .findings
+            .iter()
+            .map(|f| f.rule_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["AW-FRE-01", "AW-FRE-02"]);
+    }
+
+    #[test]
+    fn provenance_flags_only_declared_sources_that_fail() {
+        let (_dir, bundle) = fixture("provenance", &[
+            (
+                "a.md",
+                "---\ntype: Note\nsources:\n  - resource: \"refs/missing.md\"\n  - resource: \"https://example.com/spec\"\n  - resource: \"all queries in project X\"\n---\nbody\n",
+            ),
+            ("b.md", "---\ntype: Note\n---\nbody\n"),
+        ]);
+        let report = StubAuditor.audit(&bundle, "2026-11-21T00:00:00Z");
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].rule_id, "AW-PRO-01");
+        assert_eq!(report.provenance.len(), 2);
+        assert!(report.provenance[0].has_sources);
+        assert!(!report.provenance[1].has_sources);
     }
 
     #[test]

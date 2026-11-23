@@ -22,8 +22,8 @@ use crate::auditor::{Auditor, AuditorReport, Finding, Tier};
 use crate::bundle::{Bundle, StateManifest};
 use crate::json::Json;
 use crate::queue::{
-    sort_queue, QueueItem, QueueState, INDEX_DRIFT, LAPSED_VERIFICATION, NO_REVIEW_DATE, STALE,
-    SUPERSESSION_DEFECT, TIER_DROP, TYPE_MISSING,
+    sort_queue, QueueItem, QueueState, INDEX_DRIFT, LAPSED_VERIFICATION, NO_REVIEW_DATE,
+    PROVENANCE_GAP, STALE, SUPERSESSION_DEFECT, TIER_DROP, TYPE_MISSING,
 };
 use crate::sha256::sha256_hex;
 use crate::time::parse_timestamp;
@@ -87,6 +87,19 @@ impl PassReport {
             .map(finding_json)
             .collect();
         let queue = self.queue.iter().map(queue_item_json).collect();
+        let provenance = self
+            .auditor_report
+            .provenance
+            .iter()
+            .map(|entry| {
+                Json::obj(vec![
+                    ("concept", Json::Str(entry.concept.clone())),
+                    ("has_sources", Json::Bool(entry.has_sources)),
+                    ("local_sources", Json::Int(entry.local_sources as i64)),
+                    ("unresolved", Json::Int(entry.unresolved as i64)),
+                ])
+            })
+            .collect();
         let coverage = Json::Obj(
             self.auditor_report
                 .coverage
@@ -110,6 +123,7 @@ impl PassReport {
             ("findings", Json::Arr(findings)),
             ("mode", Json::Str(self.mode.as_str().to_string())),
             ("notes", Json::strings(&self.notes)),
+            ("provenance", Json::Arr(provenance)),
             ("queue", Json::Arr(queue)),
             ("raised", Json::Int(self.raised as i64)),
             ("run_id", Json::Str(self.run_id.clone())),
@@ -217,7 +231,7 @@ pub fn run_pass(
     auditor: &dyn Auditor,
     mode: Mode,
 ) -> Result<PassReport, String> {
-    let as_of_secs = parse_timestamp(as_of)
+    parse_timestamp(as_of)
         .ok_or_else(|| format!("as-of instant does not parse: {as_of}"))?;
     let bundle = Bundle::load(root)?;
     let snapshot_hash = bundle.snapshot_hash();
@@ -257,42 +271,46 @@ pub fn run_pass(
         .map(|entry| (entry.concept.as_str(), entry))
         .collect();
 
-    // Step 3, lapse recompute, and the engine's own absence rule.
+    // Step 3, lapse recompute. Staleness arrives as auditor
+    // freshness findings; the engine derives no dates of its own.
+    // The absence rule is the engine's: a concept with no review
+    // date is queued for one, never given one.
+    for finding in &auditor_report.findings {
+        if finding.rule_id == "AW-FRE-01" || finding.rule_id == "AW-FRE-02" {
+            let mut evidence = vec![("rule_id".to_string(), finding.rule_id.clone())];
+            evidence.extend(finding.evidence.iter().cloned());
+            if finding.rule_id == "AW-FRE-02" {
+                evidence.push(("malformed".to_string(), "true".to_string()));
+            }
+            let mut item = QueueItem::new(
+                finding.concept.clone(),
+                STALE,
+                evidence,
+                &run_id,
+            );
+            item.priority = 1;
+            items.push(item);
+        }
+        if finding.rule_id.starts_with("AW-PRO-") {
+            let mut evidence = vec![("rule_id".to_string(), finding.rule_id.clone())];
+            evidence.extend(finding.evidence.iter().cloned());
+            items.push(QueueItem::new(
+                finding.concept.clone(),
+                PROVENANCE_GAP,
+                evidence,
+                &run_id,
+            ));
+        }
+    }
     for concept in bundle.concepts() {
         let fm = &concept.frontmatter;
-        match fm.stale_after.as_deref() {
-            None => items.push(QueueItem::new(
+        if fm.stale_after.is_none() {
+            items.push(QueueItem::new(
                 concept.relpath.clone(),
                 NO_REVIEW_DATE,
                 vec![("stale_after".to_string(), "(absent)".to_string())],
                 &run_id,
-            )),
-            Some(raw) => match parse_timestamp(raw) {
-                Some(stale_secs) => {
-                    if as_of_secs > stale_secs {
-                        let mut item = QueueItem::new(
-                            concept.relpath.clone(),
-                            STALE,
-                            vec![
-                                ("stale_after".to_string(), raw.to_string()),
-                                ("as_of".to_string(), as_of.to_string()),
-                            ],
-                            &run_id,
-                        );
-                        item.priority = 1;
-                        items.push(item);
-                    }
-                }
-                None => items.push(QueueItem::new(
-                    concept.relpath.clone(),
-                    STALE,
-                    vec![
-                        ("stale_after".to_string(), raw.to_string()),
-                        ("malformed".to_string(), "true".to_string()),
-                    ],
-                    &run_id,
-                )),
-            },
+            ));
         }
         if let Some(entry) = currency_by_concept.get(concept.relpath.as_str()) {
             if let Some(prev) = prev_state.get(&concept.relpath) {
@@ -336,7 +354,7 @@ pub fn run_pass(
         .any(|(call, covered)| call == "freshness" && !covered)
     {
         notes.push(
-            "STALE items are derived by the engine's own date comparison while the auditor freshness call is uncovered"
+            "the auditor freshness call is uncovered; no STALE items were derived this pass"
                 .to_string(),
         );
     }

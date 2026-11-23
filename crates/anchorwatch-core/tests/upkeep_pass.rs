@@ -10,8 +10,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anchorwatch_core::auditor::StubAuditor;
-use anchorwatch_core::queue::{INDEX_DRIFT, NO_REVIEW_DATE, STALE, SUPERSESSION_DEFECT, TYPE_MISSING};
-use anchorwatch_core::upkeep::{run_pass, Mode};
+use anchorwatch_core::queue::{
+    INDEX_DRIFT, NO_REVIEW_DATE, PROVENANCE_GAP, STALE, SUPERSESSION_DEFECT, TYPE_MISSING,
+};
+use anchorwatch_core::upkeep::{Mode, run_pass};
 
 fn write_file(root: &Path, rel: &str, content: &str) {
     let path = root.join(rel);
@@ -21,10 +23,7 @@ fn write_file(root: &Path, rel: &str, content: &str) {
 }
 
 fn fixture(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "anchorwatch-pass-{name}-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("anchorwatch-pass-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     write_file(
@@ -44,23 +43,28 @@ fn fixture(name: &str) -> PathBuf {
     );
     write_file(
         &dir,
+        "concepts/c.md",
+        "---\ntype: Note\ntitle: \"C\"\nsources:\n  - resource: \"refs/missing.md\"\n---\nbody c\n",
+    );
+    write_file(
+        &dir,
         "concepts/stripped.md",
         "# Stripped\n\nThis file lost its frontmatter.\n",
     );
     write_file(
         &dir,
         ".recension/state.json",
-        "{\"migrated_at\": \"2026-11-20T21:45:00Z\", \"concepts\": {\"concepts/a.md\": \"Note\", \"concepts/b.md\": \"Note\", \"concepts/broken.md\": \"Note\", \"concepts/stripped.md\": \"Note\"}}",
+        "{\"migrated_at\": \"2026-11-20T21:45:00Z\", \"concepts\": {\"concepts/a.md\": \"Note\", \"concepts/b.md\": \"Note\", \"concepts/broken.md\": \"Note\", \"concepts/c.md\": \"Note\", \"concepts/stripped.md\": \"Note\"}}",
     );
     write_file(
         &dir,
         "index.md",
-        "---\nokf_version: \"0.3\"\ntitle: \"Fixture bundle\"\n---\n\n# Fixture bundle\n\n# concepts\n\n* [A](concepts/a.md)\n* [B](concepts/b.md)\n* [Broken](concepts/broken.md)\n",
+        "---\nokf_version: \"0.3\"\ntitle: \"Fixture bundle\"\n---\n\n# Fixture bundle\n\n# concepts\n\n* [A](concepts/a.md)\n* [B](concepts/b.md)\n* [Broken](concepts/broken.md)\n* [C](concepts/c.md)\n",
     );
     write_file(
         &dir,
         "concepts/index.md",
-        "# concepts\n\n* [A](a.md)\n* [B](b.md)\n* [Broken](broken.md)\n",
+        "# concepts\n\n* [A](a.md)\n* [B](b.md)\n* [Broken](broken.md)\n* [C](c.md)\n",
     );
     write_file(&dir, "log.md", "# Bundle Update Log\n");
     dir
@@ -81,18 +85,12 @@ fn the_fixture_raises_the_expected_queue() {
     let report = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
     assert!(reasons_for(&report, "concepts/a.md").contains(&STALE.to_string()));
     assert!(reasons_for(&report, "concepts/b.md").contains(&NO_REVIEW_DATE.to_string()));
-    assert!(
-        reasons_for(&report, "concepts/broken.md").contains(&SUPERSESSION_DEFECT.to_string())
-    );
-    assert!(
-        reasons_for(&report, "concepts/stripped.md").contains(&TYPE_MISSING.to_string())
-    );
+    assert!(reasons_for(&report, "concepts/broken.md").contains(&SUPERSESSION_DEFECT.to_string()));
+    assert!(reasons_for(&report, "concepts/stripped.md").contains(&TYPE_MISSING.to_string()));
+    assert!(reasons_for(&report, "concepts/c.md").contains(&PROVENANCE_GAP.to_string()));
     // The indexes list every concept they should, so no drift.
     assert!(
-        !report
-            .queue
-            .iter()
-            .any(|item| item.reason == INDEX_DRIFT),
+        !report.queue.iter().any(|item| item.reason == INDEX_DRIFT),
         "unexpected index drift: {:?}",
         report.queue
     );
@@ -113,7 +111,7 @@ fn two_runs_over_the_same_bundle_are_byte_identical() {
 fn a_second_pass_observes_a_tier_drop() {
     let dir = fixture("tierdrop");
     let first = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
-    assert_eq!(first.concept_count, 3);
+    assert_eq!(first.concept_count, 4);
     assert!(dir.join("upkeep").join("queue.json").exists());
     assert!(dir.join(".recension").join("pass-state.json").exists());
     // The concept is regenerated after its verification, so the
@@ -125,7 +123,10 @@ fn a_second_pass_observes_a_tier_drop() {
     );
     let second = run_pass(&dir, "2026-11-22T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
     let reasons = reasons_for(&second, "concepts/b.md");
-    assert!(reasons.contains(&"TIER DROP".to_string()), "reasons: {reasons:?}");
+    assert!(
+        reasons.contains(&"TIER DROP".to_string()),
+        "reasons: {reasons:?}"
+    );
     assert!(
         reasons.contains(&"LAPSED VERIFICATION".to_string()),
         "reasons: {reasons:?}"

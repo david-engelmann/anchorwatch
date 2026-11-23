@@ -19,6 +19,19 @@ pub struct VerifiedEvent {
     pub at: String,
 }
 
+/// One entry from a concept's `sources` list.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SourceEntry {
+    /// The entry's `resource`: a URL, a bundle path, or a scope
+    /// descriptor, exactly as written. Required in an entry by the
+    /// spec, but recorded as optional here because a malformed entry
+    /// is the auditor's finding to raise, not the parser's to hide.
+    pub resource: Option<String>,
+    /// A content hash the entry records for its resource, when the
+    /// producer wrote one under the `content_hash` extension key.
+    pub content_hash: Option<String>,
+}
+
 /// The fields the upkeep contract reads from one concept file.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Frontmatter {
@@ -38,6 +51,8 @@ pub struct Frontmatter {
     pub verified: Vec<VerifiedEvent>,
     /// Whether the concept carries a `sources` family at all.
     pub has_sources: bool,
+    /// The parsed `sources` entries, in file order.
+    pub sources: Vec<SourceEntry>,
 }
 
 /// Splits a document into its parsed frontmatter and whether a
@@ -50,6 +65,7 @@ pub fn parse_document(text: &str) -> (Frontmatter, bool) {
     let mut fm = Frontmatter::default();
     let mut current_key = String::new();
     let mut pending_event: Option<(Option<String>, Option<String>)> = None;
+    let mut pending_source: Option<SourceEntry> = None;
     let flush_event = |fm: &mut Frontmatter, pending: &mut Option<(Option<String>, Option<String>)>| {
         if let Some((by, at)) = pending.take() {
             if let (Some(by), Some(at)) = (by, at) {
@@ -57,15 +73,22 @@ pub fn parse_document(text: &str) -> (Frontmatter, bool) {
             }
         }
     };
+    let flush_source = |fm: &mut Frontmatter, pending: &mut Option<SourceEntry>| {
+        if let Some(entry) = pending.take() {
+            fm.sources.push(entry);
+        }
+    };
     for line in lines {
         if line == "---" {
             flush_event(&mut fm, &mut pending_event);
+            flush_source(&mut fm, &mut pending_source);
             return (fm, true);
         }
         let trimmed = line.trim_start();
         let indent = line.len() - trimmed.len();
         if indent == 0 {
             flush_event(&mut fm, &mut pending_event);
+            flush_source(&mut fm, &mut pending_source);
             let Some((key, value)) = trimmed.split_once(':') else {
                 current_key.clear();
                 continue;
@@ -93,7 +116,13 @@ pub fn parse_document(text: &str) -> (Frontmatter, bool) {
                     }
                 }
                 "sources" => {
-                    if !value.is_empty() {
+                    if value.starts_with('{') {
+                        fm.has_sources = true;
+                        fm.sources.push(SourceEntry {
+                            resource: flow_value(&value, "resource"),
+                            content_hash: flow_value(&value, "content_hash"),
+                        });
+                    } else if !value.is_empty() {
                         fm.has_sources = true;
                     }
                 }
@@ -135,11 +164,41 @@ pub fn parse_document(text: &str) -> (Frontmatter, bool) {
                 if trimmed.starts_with("- ") || trimmed.contains(':') {
                     fm.has_sources = true;
                 }
+                if let Some(item) = trimmed.strip_prefix("- ") {
+                    flush_source(&mut fm, &mut pending_source);
+                    let mut entry = SourceEntry::default();
+                    if item.starts_with('{') {
+                        entry.resource = flow_value(item, "resource");
+                        entry.content_hash = flow_value(item, "content_hash");
+                        fm.sources.push(entry);
+                    } else {
+                        if let Some((key, value)) = item.split_once(':') {
+                            match key.trim() {
+                                "resource" => entry.resource = Some(clean_scalar(value)),
+                                "content_hash" => {
+                                    entry.content_hash = Some(clean_scalar(value))
+                                }
+                                _ => {}
+                            }
+                        }
+                        pending_source = Some(entry);
+                    }
+                } else if pending_source.is_some() {
+                    if let Some((key, value)) = trimmed.split_once(':') {
+                        let entry = pending_source.as_mut().unwrap();
+                        match key.trim() {
+                            "resource" => entry.resource = Some(clean_scalar(value)),
+                            "content_hash" => entry.content_hash = Some(clean_scalar(value)),
+                            _ => {}
+                        }
+                    }
+                }
             }
             _ => {}
         }
     }
     flush_event(&mut fm, &mut pending_event);
+    flush_source(&mut fm, &mut pending_source);
     (fm, true)
 }
 
@@ -195,6 +254,20 @@ mod tests {
         let (fm, present) = parse_document("# Just a heading\n");
         assert!(!present);
         assert_eq!(fm.concept_type, None);
+    }
+
+    #[test]
+    fn reads_sources_entries_with_resources_and_hashes() {
+        let doc = "---\ntype: Note\nsources:\n  - resource: \"refs/policy.md\"\n    content_hash: \"abc123\"\n  - resource: \"https://example.com/spec\"\n---\nbody\n";
+        let (fm, _) = parse_document(doc);
+        assert!(fm.has_sources);
+        assert_eq!(fm.sources.len(), 2);
+        assert_eq!(fm.sources[0].resource.as_deref(), Some("refs/policy.md"));
+        assert_eq!(fm.sources[0].content_hash.as_deref(), Some("abc123"));
+        assert_eq!(
+            fm.sources[1].resource.as_deref(),
+            Some("https://example.com/spec")
+        );
     }
 
     #[test]
