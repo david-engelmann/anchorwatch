@@ -7,7 +7,7 @@
 //!
 //! The steps run in the contract's order: snapshot, audit intake,
 //! lapse recompute, supersession audit, index regeneration, log
-//! append, queue maintenance, report. The engine's never list binds
+//! entry, queue maintenance, report. The engine's never list binds
 //! every step: it never edits a concept body, never stamps a
 //! verification event, never sets or removes a review date, never
 //! chooses a supersession target, and never deletes a file. The one
@@ -980,10 +980,12 @@ fn apply_writes(
     std::fs::write(state_dir.join("pass-state.json"), state)
         .map_err(|e| format!("cannot write pass state: {e}"))?;
     actions.push("pass state recorded at .recension/pass-state.json".to_string());
-    // Log append, grouped under the run date.
+    // Log entry, grouped under the run date. Section 9 of the spec
+    // orders log groups newest first, so the entry is inserted in
+    // date order rather than appended at the end of the file.
     let date = &as_of[..10.min(as_of.len())];
     let log_path = root.join("log.md");
-    let mut log =
+    let log =
         std::fs::read_to_string(&log_path).unwrap_or_else(|_| "# Bundle Update Log\n".to_string());
     let open = queue.iter().filter(|i| i.state == QueueState::Open).count();
     let entry = format!(
@@ -991,20 +993,60 @@ fn apply_writes(
         auditor_report.auditor,
         auditor_report.findings.len()
     );
-    let heading = format!("## {date}");
-    if log.contains(&heading) {
-        if !log.ends_with('\n') {
-            log.push('\n');
-        }
-        log.push_str(&entry);
-        log.push('\n');
-    } else {
-        if !log.ends_with('\n') {
-            log.push('\n');
-        }
-        log.push_str(&format!("\n{heading}\n{entry}\n"));
-    }
+    let log = insert_log_entry(&log, date, &entry);
     std::fs::write(&log_path, log).map_err(|e| format!("cannot write log.md: {e}"))?;
-    actions.push("log entry appended to log.md".to_string());
+    actions.push("log entry recorded in log.md".to_string());
     Ok(())
+}
+
+/// Inserts one entry into a bundle log under its date group, keeping
+/// the section 9 order of groups, newest date first. An entry for a
+/// date that already has a group lands at the end of that group,
+/// wherever the group sits. A new group is placed before the first
+/// older group, and after the title when every group is newer. The
+/// title line, when the log carries one, stays first. Groups already
+/// in the file are never reordered; the pass maintains the order in
+/// the entries it adds.
+fn insert_log_entry(log: &str, date: &str, entry: &str) -> String {
+    let heading = format!("## {date}");
+    let mut lines: Vec<String> = log.lines().map(str::to_string).collect();
+    if let Some(start) = lines
+        .iter()
+        .position(|line| line.as_str() == heading.as_str())
+    {
+        let end = lines[start + 1..]
+            .iter()
+            .position(|line| line.starts_with("## "))
+            .map_or(lines.len(), |p| start + 1 + p);
+        let mut at = end;
+        while at > start + 1 && lines[at - 1].is_empty() {
+            at -= 1;
+        }
+        lines.insert(at, entry.to_string());
+        return lines.join("\n") + "\n";
+    }
+    let mut at = lines.len();
+    for (i, line) in lines.iter().enumerate() {
+        let Some(group) = line.strip_prefix("## ") else {
+            continue;
+        };
+        let token = group.split_whitespace().next().unwrap_or("");
+        let is_date = token.len() == 10 && token.chars().all(|c| c.is_ascii_digit() || c == '-');
+        if is_date && token < date {
+            at = i;
+            break;
+        }
+    }
+    if at == lines.len() {
+        if !lines.is_empty() && !lines[lines.len() - 1].is_empty() {
+            lines.push(String::new());
+        }
+        lines.push(heading);
+        lines.push(entry.to_string());
+    } else {
+        lines.insert(at, String::new());
+        lines.insert(at, entry.to_string());
+        lines.insert(at, heading);
+    }
+    lines.join("\n") + "\n"
 }

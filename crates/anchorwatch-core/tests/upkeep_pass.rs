@@ -108,6 +108,38 @@ fn two_runs_over_the_same_bundle_are_byte_identical() {
 }
 
 #[test]
+fn apply_keeps_the_log_newest_first() {
+    let dir = fixture("logorder");
+    write_file(
+        &dir,
+        "log.md",
+        "# Bundle Update Log\n\n## 2026-11-19\n* **Creation**: Bundle created.\n",
+    );
+    run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    let log = std::fs::read_to_string(dir.join("log.md")).unwrap();
+    assert!(log.starts_with("# Bundle Update Log"));
+    let new_group = log.find("## 2026-11-21").unwrap();
+    let old_group = log.find("## 2026-11-19").unwrap();
+    assert!(new_group < old_group, "log not newest first:\n{log}");
+    // A second pass on the same date joins the existing group
+    // instead of opening a new one or landing in the older group.
+    run_pass(&dir, "2026-11-21T12:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    let log = std::fs::read_to_string(dir.join("log.md")).unwrap();
+    assert_eq!(log.matches("## 2026-11-21").count(), 1);
+    let first_entry = log.find("Pass ").unwrap();
+    let second_entry = log.rfind("Pass ").unwrap();
+    assert!(first_entry < second_entry);
+    assert!(second_entry < log.find("## 2026-11-19").unwrap());
+    // A backfilled date lands between the newer and older groups.
+    run_pass(&dir, "2026-11-20T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    let log = std::fs::read_to_string(dir.join("log.md")).unwrap();
+    let d21 = log.find("## 2026-11-21").unwrap();
+    let d20 = log.find("## 2026-11-20").unwrap();
+    let d19 = log.find("## 2026-11-19").unwrap();
+    assert!(d21 < d20 && d20 < d19, "log groups out of order:\n{log}");
+}
+
+#[test]
 fn a_second_pass_observes_a_tier_drop() {
     let dir = fixture("tierdrop");
     let first = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
