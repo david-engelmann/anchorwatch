@@ -25,12 +25,7 @@ pub enum Json {
 impl Json {
     /// Builds an object from key and value pairs.
     pub fn obj(pairs: Vec<(&str, Json)>) -> Json {
-        Json::Obj(
-            pairs
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect(),
-        )
+        Json::Obj(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
     }
 
     /// Builds an array of strings.
@@ -117,10 +112,7 @@ mod tests {
 
     #[test]
     fn keys_render_in_sorted_order() {
-        let value = Json::obj(vec![
-            ("b", Json::Int(2)),
-            ("a", Json::Int(1)),
-        ]);
+        let value = Json::obj(vec![("b", Json::Int(2)), ("a", Json::Int(1))]);
         let rendered = value.render();
         assert!(rendered.find("\"a\"").unwrap() < rendered.find("\"b\"").unwrap());
     }

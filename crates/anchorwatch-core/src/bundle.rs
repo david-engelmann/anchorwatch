@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::frontmatter::{parse_document, Frontmatter};
+use crate::frontmatter::{Frontmatter, parse_document};
 use crate::sha256::sha256_hex;
 
 /// One Markdown file in the bundle, with the frontmatter the engine reads.

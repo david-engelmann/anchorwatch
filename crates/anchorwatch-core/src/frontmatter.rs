@@ -66,13 +66,14 @@ pub fn parse_document(text: &str) -> (Frontmatter, bool) {
     let mut current_key = String::new();
     let mut pending_event: Option<(Option<String>, Option<String>)> = None;
     let mut pending_source: Option<SourceEntry> = None;
-    let flush_event = |fm: &mut Frontmatter, pending: &mut Option<(Option<String>, Option<String>)>| {
-        if let Some((by, at)) = pending.take() {
-            if let (Some(by), Some(at)) = (by, at) {
-                fm.verified.push(VerifiedEvent { by, at });
+    let flush_event =
+        |fm: &mut Frontmatter, pending: &mut Option<(Option<String>, Option<String>)>| {
+            if let Some((by, at)) = pending.take() {
+                if let (Some(by), Some(at)) = (by, at) {
+                    fm.verified.push(VerifiedEvent { by, at });
+                }
             }
-        }
-    };
+        };
     let flush_source = |fm: &mut Frontmatter, pending: &mut Option<SourceEntry>| {
         if let Some(entry) = pending.take() {
             fm.sources.push(entry);
@@ -175,9 +176,7 @@ pub fn parse_document(text: &str) -> (Frontmatter, bool) {
                         if let Some((key, value)) = item.split_once(':') {
                             match key.trim() {
                                 "resource" => entry.resource = Some(clean_scalar(value)),
-                                "content_hash" => {
-                                    entry.content_hash = Some(clean_scalar(value))
-                                }
+                                "content_hash" => entry.content_hash = Some(clean_scalar(value)),
                                 _ => {}
                             }
                         }
@@ -204,7 +203,10 @@ pub fn parse_document(text: &str) -> (Frontmatter, bool) {
 
 fn clean_scalar(value: &str) -> String {
     let value = value.trim();
-    let value = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')).unwrap_or(value);
+    let value = value
+        .strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+        .unwrap_or(value);
     value.to_string()
 }
 
@@ -244,7 +246,8 @@ mod tests {
         assert_eq!(fm.verified.len(), 2);
         assert_eq!(fm.verified[0].by, "human:ada");
         assert_eq!(fm.verified[1].at, "2026-11-03T09:00:00Z");
-        let flow = "---\ntype: Note\nverified: { by: \"human:ada\", at: \"2026-11-02T09:00:00Z\" }\n---\n";
+        let flow =
+            "---\ntype: Note\nverified: { by: \"human:ada\", at: \"2026-11-02T09:00:00Z\" }\n---\n";
         let (fm, _) = parse_document(flow);
         assert_eq!(fm.verified.len(), 1);
     }

@@ -250,10 +250,7 @@ impl Auditor for StubAuditor {
                             rule_id: "AW-PRO-01".to_string(),
                             severity: Severity::Error,
                             concept: concept.relpath.clone(),
-                            evidence: vec![(
-                                "resource".to_string(),
-                                resource.to_string(),
-                            )],
+                            evidence: vec![("resource".to_string(), resource.to_string())],
                         });
                     }
                     Some(target) => {
@@ -290,10 +287,7 @@ impl Auditor for StubAuditor {
                                 rule_id: "AW-SUP-01".to_string(),
                                 severity: Severity::Error,
                                 concept: concept.relpath.clone(),
-                                evidence: vec![(
-                                    "superseded_by".to_string(),
-                                    target.to_string(),
-                                )],
+                                evidence: vec![("superseded_by".to_string(), target.to_string())],
                             });
                         }
                         if chain_cycles(bundle, &concept.relpath) {
@@ -301,10 +295,7 @@ impl Auditor for StubAuditor {
                                 rule_id: "AW-SUP-02".to_string(),
                                 severity: Severity::Error,
                                 concept: concept.relpath.clone(),
-                                evidence: vec![(
-                                    "superseded_by".to_string(),
-                                    target.to_string(),
-                                )],
+                                evidence: vec![("superseded_by".to_string(), target.to_string())],
                             });
                         }
                     }
@@ -313,10 +304,7 @@ impl Auditor for StubAuditor {
                             rule_id: "AW-SUP-01".to_string(),
                             severity: Severity::Error,
                             concept: concept.relpath.clone(),
-                            evidence: vec![(
-                                "superseded_by".to_string(),
-                                "(absent)".to_string(),
-                            )],
+                            evidence: vec![("superseded_by".to_string(), "(absent)".to_string())],
                         });
                     }
                 }
@@ -408,10 +396,13 @@ mod tests {
 
     #[test]
     fn currency_counts_only_events_at_or_after_generation() {
-        let (_dir, bundle) = fixture("currency", &[(
-            "a.md",
-            "---\ntype: Note\ngenerated:\n  at: \"2026-11-10T00:00:00Z\"\nverified:\n  - by: \"human:ada\"\n    at: \"2026-11-01T00:00:00Z\"\n  - by: \"process:nightly\"\n    at: \"2026-11-12T00:00:00Z\"\n---\nbody\n",
-        )]);
+        let (_dir, bundle) = fixture(
+            "currency",
+            &[(
+                "a.md",
+                "---\ntype: Note\ngenerated:\n  at: \"2026-11-10T00:00:00Z\"\nverified:\n  - by: \"human:ada\"\n    at: \"2026-11-01T00:00:00Z\"\n  - by: \"process:nightly\"\n    at: \"2026-11-12T00:00:00Z\"\n---\nbody\n",
+            )],
+        );
         let report = StubAuditor.audit(&bundle, "2026-11-21T00:00:00Z");
         assert_eq!(report.currency.len(), 1);
         assert_eq!(report.currency[0].current_events, 1);
@@ -421,38 +412,40 @@ mod tests {
 
     #[test]
     fn freshness_flags_passed_and_malformed_review_dates() {
-        let (_dir, bundle) = fixture("freshness", &[
-            (
-                "a.md",
-                "---\ntype: Note\nstale_after: 2026-11-01\n---\nbody\n",
-            ),
-            (
-                "b.md",
-                "---\ntype: Note\nstale_after: next Tuesday\n---\nbody\n",
-            ),
-            (
-                "c.md",
-                "---\ntype: Note\nstale_after: 2027-01-01\n---\nbody\n",
-            ),
-        ]);
+        let (_dir, bundle) = fixture(
+            "freshness",
+            &[
+                (
+                    "a.md",
+                    "---\ntype: Note\nstale_after: 2026-11-01\n---\nbody\n",
+                ),
+                (
+                    "b.md",
+                    "---\ntype: Note\nstale_after: next Tuesday\n---\nbody\n",
+                ),
+                (
+                    "c.md",
+                    "---\ntype: Note\nstale_after: 2027-01-01\n---\nbody\n",
+                ),
+            ],
+        );
         let report = StubAuditor.audit(&bundle, "2026-11-21T00:00:00Z");
-        let ids: Vec<&str> = report
-            .findings
-            .iter()
-            .map(|f| f.rule_id.as_str())
-            .collect();
+        let ids: Vec<&str> = report.findings.iter().map(|f| f.rule_id.as_str()).collect();
         assert_eq!(ids, vec!["AW-FRE-01", "AW-FRE-02"]);
     }
 
     #[test]
     fn provenance_flags_only_declared_sources_that_fail() {
-        let (_dir, bundle) = fixture("provenance", &[
-            (
-                "a.md",
-                "---\ntype: Note\nsources:\n  - resource: \"refs/missing.md\"\n  - resource: \"https://example.com/spec\"\n  - resource: \"all queries in project X\"\n---\nbody\n",
-            ),
-            ("b.md", "---\ntype: Note\n---\nbody\n"),
-        ]);
+        let (_dir, bundle) = fixture(
+            "provenance",
+            &[
+                (
+                    "a.md",
+                    "---\ntype: Note\nsources:\n  - resource: \"refs/missing.md\"\n  - resource: \"https://example.com/spec\"\n  - resource: \"all queries in project X\"\n---\nbody\n",
+                ),
+                ("b.md", "---\ntype: Note\n---\nbody\n"),
+            ],
+        );
         let report = StubAuditor.audit(&bundle, "2026-11-21T00:00:00Z");
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].rule_id, "AW-PRO-01");
@@ -463,10 +456,13 @@ mod tests {
 
     #[test]
     fn a_dangling_supersession_target_is_a_finding() {
-        let (_dir, bundle) = fixture("dangling", &[(
-            "a.md",
-            "---\ntype: Note\nstatus: deprecated\nsuperseded_by: gone.md\n---\nbody\n",
-        )]);
+        let (_dir, bundle) = fixture(
+            "dangling",
+            &[(
+                "a.md",
+                "---\ntype: Note\nstatus: deprecated\nsuperseded_by: gone.md\n---\nbody\n",
+            )],
+        );
         let report = StubAuditor.audit(&bundle, "2026-11-21T00:00:00Z");
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].rule_id, "AW-SUP-01");

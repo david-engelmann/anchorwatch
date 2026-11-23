@@ -23,7 +23,11 @@ pub fn parse_timestamp(value: &str) -> Option<i64> {
         if idx == 0 {
             return None;
         }
-        let sign = if rest.as_bytes()[idx] == b'+' { 1i64 } else { -1i64 };
+        let sign = if rest.as_bytes()[idx] == b'+' {
+            1i64
+        } else {
+            -1i64
+        };
         let off = &rest[idx + 1..];
         let (oh, om) = off.split_once(':')?;
         let oh: i64 = oh.parse().ok()?;
@@ -36,7 +40,11 @@ pub fn parse_timestamp(value: &str) -> Option<i64> {
     let hh: i64 = parts.next()?.parse().ok()?;
     let mm: i64 = parts.next()?.parse().ok()?;
     let ss: i64 = parts.next()?.split('.').next()?.parse().ok()?;
-    if parts.next().is_some() || !(0..24).contains(&hh) || !(0..60).contains(&mm) || !(0..61).contains(&ss) {
+    if parts.next().is_some()
+        || !(0..24).contains(&hh)
+        || !(0..60).contains(&mm)
+        || !(0..61).contains(&ss)
+    {
         return None;
     }
     Some(days_from_civil(y, m, d) * 86_400 + hh * 3600 + mm * 60 + ss - offset_secs)

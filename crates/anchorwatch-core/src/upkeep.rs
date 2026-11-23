@@ -18,16 +18,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use crate::CONTRACT_VERSION;
 use crate::auditor::{Auditor, AuditorReport, Finding, Tier};
 use crate::bundle::{Bundle, StateManifest};
 use crate::json::Json;
 use crate::queue::{
-    sort_queue, QueueItem, QueueState, INDEX_DRIFT, LAPSED_VERIFICATION, NO_REVIEW_DATE,
-    PROVENANCE_GAP, STALE, SUPERSESSION_DEFECT, TIER_DROP, TYPE_MISSING,
+    INDEX_DRIFT, LAPSED_VERIFICATION, NO_REVIEW_DATE, PROVENANCE_GAP, QueueItem, QueueState, STALE,
+    SUPERSESSION_DEFECT, TIER_DROP, TYPE_MISSING, sort_queue,
 };
 use crate::sha256::sha256_hex;
 use crate::time::parse_timestamp;
-use crate::CONTRACT_VERSION;
 
 /// Whether a pass writes its maintenance artefacts or only reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,8 +231,7 @@ pub fn run_pass(
     auditor: &dyn Auditor,
     mode: Mode,
 ) -> Result<PassReport, String> {
-    parse_timestamp(as_of)
-        .ok_or_else(|| format!("as-of instant does not parse: {as_of}"))?;
+    parse_timestamp(as_of).ok_or_else(|| format!("as-of instant does not parse: {as_of}"))?;
     let bundle = Bundle::load(root)?;
     let snapshot_hash = bundle.snapshot_hash();
     let run_id = format!(
@@ -259,9 +258,7 @@ pub fn run_pass(
     let prev_state = load_pass_state(root);
     let prev_queue = load_previous_queue(root);
     if prev_state.is_empty() {
-        notes.push(
-            "no previous pass state; this pass establishes the tier baseline".to_string(),
-        );
+        notes.push("no previous pass state; this pass establishes the tier baseline".to_string());
     }
 
     let mut items: Vec<QueueItem> = Vec::new();
@@ -282,12 +279,7 @@ pub fn run_pass(
             if finding.rule_id == "AW-FRE-02" {
                 evidence.push(("malformed".to_string(), "true".to_string()));
             }
-            let mut item = QueueItem::new(
-                finding.concept.clone(),
-                STALE,
-                evidence,
-                &run_id,
-            );
+            let mut item = QueueItem::new(finding.concept.clone(), STALE, evidence, &run_id);
             item.priority = 1;
             items.push(item);
         }
@@ -472,7 +464,13 @@ fn load_pass_state(root: &Path) -> BTreeMap<String, PrevTier> {
                 .get(&concept)
                 .and_then(|n| n.parse().ok())
                 .unwrap_or(0);
-            (concept, PrevTier { tier, current_events })
+            (
+                concept,
+                PrevTier {
+                    tier,
+                    current_events,
+                },
+            )
         })
         .collect()
 }
@@ -720,10 +718,7 @@ fn index_drift(bundle: &Bundle) -> Vec<Drift> {
             format!("{dir}/index.md")
         };
         let expected: BTreeSet<String> = if dir.is_empty() {
-            bundle
-                .concepts()
-                .map(|c| c.relpath.clone())
-                .collect()
+            bundle.concepts().map(|c| c.relpath.clone()).collect()
         } else {
             bundle
                 .concepts()
@@ -742,8 +737,8 @@ fn index_drift(bundle: &Bundle) -> Vec<Drift> {
         }
         let actual: BTreeSet<String> = match bundle.file(&index_rel) {
             Some(file) => {
-                let text = std::fs::read_to_string(bundle.root.join(&file.relpath))
-                    .unwrap_or_default();
+                let text =
+                    std::fs::read_to_string(bundle.root.join(&file.relpath)).unwrap_or_default();
                 extract_links(&text)
             }
             None => BTreeSet::new(),
@@ -913,8 +908,7 @@ fn apply_writes(
         let path = root.join(index_rel);
         let existing = std::fs::read_to_string(&path).unwrap_or_default();
         if existing != content {
-            std::fs::write(&path, content)
-                .map_err(|e| format!("cannot write {index_rel}: {e}"))?;
+            std::fs::write(&path, content).map_err(|e| format!("cannot write {index_rel}: {e}"))?;
             actions.push(format!("index regenerated: {index_rel}"));
         }
     }
@@ -990,7 +984,8 @@ fn apply_writes(
     // Log append, grouped under the run date.
     let date = &as_of[..10.min(as_of.len())];
     let log_path = root.join("log.md");
-    let mut log = std::fs::read_to_string(&log_path).unwrap_or_else(|_| "# Bundle Update Log\n".to_string());
+    let mut log =
+        std::fs::read_to_string(&log_path).unwrap_or_else(|_| "# Bundle Update Log\n".to_string());
     let open = queue.iter().filter(|i| i.state == QueueState::Open).count();
     let entry = format!(
         "* **Upkeep**: Pass {run_id} at {as_of}. Queue holds {open} open items. Auditor {} reported {} findings.",

@@ -83,7 +83,12 @@ pub struct QueueItem {
 
 impl QueueItem {
     /// Creates an open item raised by `run_id`.
-    pub fn new(concept: String, reason: &str, evidence: Vec<(String, String)>, run_id: &str) -> QueueItem {
+    pub fn new(
+        concept: String,
+        reason: &str,
+        evidence: Vec<(String, String)>,
+        run_id: &str,
+    ) -> QueueItem {
         QueueItem {
             concept,
             reason: reason.to_string(),
