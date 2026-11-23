@@ -175,7 +175,7 @@ impl Auditor for StubAuditor {
             for event in &fm.verified {
                 let at = parse_timestamp(&event.at);
                 let is_current = match (at, generated) {
-                    (Some(at), Some(gen)) => at >= gen,
+                    (Some(at), Some(gen_at)) => at >= gen_at,
                     (Some(_), None) => true,
                     (None, _) => false,
                 };
