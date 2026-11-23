@@ -210,18 +210,18 @@ impl Auditor for StubAuditor {
                         evidence: vec![("stale_after".to_string(), raw.to_string())],
                     }),
                     Some(stale_secs) => {
-                        if let Some(now) = as_of_secs {
-                            if now > stale_secs {
-                                findings.push(Finding {
-                                    rule_id: "AW-FRE-01".to_string(),
-                                    severity: Severity::Warning,
-                                    concept: concept.relpath.clone(),
-                                    evidence: vec![
-                                        ("stale_after".to_string(), raw.to_string()),
-                                        ("as_of".to_string(), as_of.to_string()),
-                                    ],
-                                });
-                            }
+                        if let Some(now) = as_of_secs
+                            && now > stale_secs
+                        {
+                            findings.push(Finding {
+                                rule_id: "AW-FRE-01".to_string(),
+                                severity: Severity::Warning,
+                                concept: concept.relpath.clone(),
+                                evidence: vec![
+                                    ("stale_after".to_string(), raw.to_string()),
+                                    ("as_of".to_string(), as_of.to_string()),
+                                ],
+                            });
                         }
                     }
                 }
@@ -254,20 +254,20 @@ impl Auditor for StubAuditor {
                         });
                     }
                     Some(target) => {
-                        if let Some(recorded) = entry.content_hash.as_deref() {
-                            if recorded != target.hash {
-                                unresolved += 1;
-                                findings.push(Finding {
-                                    rule_id: "AW-PRO-02".to_string(),
-                                    severity: Severity::Error,
-                                    concept: concept.relpath.clone(),
-                                    evidence: vec![
-                                        ("resource".to_string(), resource.to_string()),
-                                        ("recorded_hash".to_string(), recorded.to_string()),
-                                        ("actual_hash".to_string(), target.hash.clone()),
-                                    ],
-                                });
-                            }
+                        if let Some(recorded) = entry.content_hash.as_deref()
+                            && recorded != target.hash
+                        {
+                            unresolved += 1;
+                            findings.push(Finding {
+                                rule_id: "AW-PRO-02".to_string(),
+                                severity: Severity::Error,
+                                concept: concept.relpath.clone(),
+                                evidence: vec![
+                                    ("resource".to_string(), resource.to_string()),
+                                    ("recorded_hash".to_string(), recorded.to_string()),
+                                    ("actual_hash".to_string(), target.hash.clone()),
+                                ],
+                            });
                         }
                     }
                 }
@@ -312,20 +312,18 @@ impl Auditor for StubAuditor {
             // A current concept that links to a deprecated concept as
             // its live reference is a proposal for a decider, never
             // an engine conclusion.
-            if fm.status.as_deref() != Some("deprecated") && !deprecated.is_empty() {
-                if let Ok(text) = std::fs::read_to_string(bundle.root.join(&concept.relpath)) {
-                    for target in &deprecated {
-                        if text.contains(&format!("]({target})")) {
-                            findings.push(Finding {
-                                rule_id: "AW-SUP-03".to_string(),
-                                severity: Severity::Warning,
-                                concept: concept.relpath.clone(),
-                                evidence: vec![(
-                                    "links_to_deprecated".to_string(),
-                                    target.to_string(),
-                                )],
-                            });
-                        }
+            if fm.status.as_deref() != Some("deprecated")
+                && !deprecated.is_empty()
+                && let Ok(text) = std::fs::read_to_string(bundle.root.join(&concept.relpath))
+            {
+                for target in &deprecated {
+                    if text.contains(&format!("]({target})")) {
+                        findings.push(Finding {
+                            rule_id: "AW-SUP-03".to_string(),
+                            severity: Severity::Warning,
+                            concept: concept.relpath.clone(),
+                            evidence: vec![("links_to_deprecated".to_string(), target.to_string())],
+                        });
                     }
                 }
             }

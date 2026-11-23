@@ -68,10 +68,8 @@ pub fn parse_document(text: &str) -> (Frontmatter, bool) {
     let mut pending_source: Option<SourceEntry> = None;
     let flush_event =
         |fm: &mut Frontmatter, pending: &mut Option<(Option<String>, Option<String>)>| {
-            if let Some((by, at)) = pending.take() {
-                if let (Some(by), Some(at)) = (by, at) {
-                    fm.verified.push(VerifiedEvent { by, at });
-                }
+            if let Some((Some(by), Some(at))) = pending.take() {
+                fm.verified.push(VerifiedEvent { by, at });
             }
         };
     let flush_source = |fm: &mut Frontmatter, pending: &mut Option<SourceEntry>| {
@@ -108,12 +106,11 @@ pub fn parse_document(text: &str) -> (Frontmatter, bool) {
                     }
                 }
                 "verified" => {
-                    if value.starts_with('{') {
-                        if let (Some(by), Some(at)) =
+                    if value.starts_with('{')
+                        && let (Some(by), Some(at)) =
                             (flow_value(&value, "by"), flow_value(&value, "at"))
-                        {
-                            fm.verified.push(VerifiedEvent { by, at });
-                        }
+                    {
+                        fm.verified.push(VerifiedEvent { by, at });
                     }
                 }
                 "sources" => {
@@ -133,10 +130,10 @@ pub fn parse_document(text: &str) -> (Frontmatter, bool) {
         }
         match current_key.as_str() {
             "generated" => {
-                if let Some((key, value)) = trimmed.split_once(':') {
-                    if key.trim() == "at" {
-                        fm.generated_at = Some(clean_scalar(value));
-                    }
+                if let Some((key, value)) = trimmed.split_once(':')
+                    && key.trim() == "at"
+                {
+                    fm.generated_at = Some(clean_scalar(value));
                 }
             }
             "verified" => {
@@ -182,14 +179,13 @@ pub fn parse_document(text: &str) -> (Frontmatter, bool) {
                         }
                         pending_source = Some(entry);
                     }
-                } else if pending_source.is_some() {
-                    if let Some((key, value)) = trimmed.split_once(':') {
-                        let entry = pending_source.as_mut().unwrap();
-                        match key.trim() {
-                            "resource" => entry.resource = Some(clean_scalar(value)),
-                            "content_hash" => entry.content_hash = Some(clean_scalar(value)),
-                            _ => {}
-                        }
+                } else if let Some(entry) = pending_source.as_mut()
+                    && let Some((key, value)) = trimmed.split_once(':')
+                {
+                    match key.trim() {
+                        "resource" => entry.resource = Some(clean_scalar(value)),
+                        "content_hash" => entry.content_hash = Some(clean_scalar(value)),
+                        _ => {}
                     }
                 }
             }
@@ -213,10 +209,10 @@ fn clean_scalar(value: &str) -> String {
 fn flow_value(flow: &str, wanted: &str) -> Option<String> {
     let inner = flow.trim().strip_prefix('{')?.strip_suffix('}')?;
     for part in inner.split(',') {
-        if let Some((key, value)) = part.split_once(':') {
-            if key.trim() == wanted {
-                return Some(clean_scalar(value));
-            }
+        if let Some((key, value)) = part.split_once(':')
+            && key.trim() == wanted
+        {
+            return Some(clean_scalar(value));
         }
     }
     None

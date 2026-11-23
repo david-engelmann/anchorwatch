@@ -19,7 +19,7 @@ pub fn parse_timestamp(value: &str) -> Option<i64> {
     let (y, m, d) = parse_date(date_part)?;
     let (time_part, offset_secs) = if let Some(t) = rest.strip_suffix('Z') {
         (t, 0i64)
-    } else if let Some(idx) = rest.rfind(|c| c == '+' || c == '-') {
+    } else if let Some(idx) = rest.rfind(['+', '-']) {
         if idx == 0 {
             return None;
         }

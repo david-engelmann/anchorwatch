@@ -304,39 +304,38 @@ pub fn run_pass(
                 &run_id,
             ));
         }
-        if let Some(entry) = currency_by_concept.get(concept.relpath.as_str()) {
-            if let Some(prev) = prev_state.get(&concept.relpath) {
-                if let Some(prev_tier) = Tier::from_name(&prev.tier) {
-                    if entry.tier < prev_tier {
-                        let mut item = QueueItem::new(
-                            concept.relpath.clone(),
-                            TIER_DROP,
-                            vec![
-                                ("tier_before".to_string(), prev.tier.clone()),
-                                ("tier_after".to_string(), entry.tier.as_str().to_string()),
-                            ],
-                            &run_id,
-                        );
-                        if prev_tier == Tier::HumanReviewed {
-                            item.priority = 0;
-                        }
-                        items.push(item);
-                    }
-                    if prev.current_events > 0 && entry.current_events == 0 {
-                        items.push(QueueItem::new(
-                            concept.relpath.clone(),
-                            LAPSED_VERIFICATION,
-                            vec![
-                                (
-                                    "current_events_before".to_string(),
-                                    prev.current_events.to_string(),
-                                ),
-                                ("current_events".to_string(), "0".to_string()),
-                            ],
-                            &run_id,
-                        ));
-                    }
+        if let Some(entry) = currency_by_concept.get(concept.relpath.as_str())
+            && let Some(prev) = prev_state.get(&concept.relpath)
+            && let Some(prev_tier) = Tier::from_name(&prev.tier)
+        {
+            if entry.tier < prev_tier {
+                let mut item = QueueItem::new(
+                    concept.relpath.clone(),
+                    TIER_DROP,
+                    vec![
+                        ("tier_before".to_string(), prev.tier.clone()),
+                        ("tier_after".to_string(), entry.tier.as_str().to_string()),
+                    ],
+                    &run_id,
+                );
+                if prev_tier == Tier::HumanReviewed {
+                    item.priority = 0;
                 }
+                items.push(item);
+            }
+            if prev.current_events > 0 && entry.current_events == 0 {
+                items.push(QueueItem::new(
+                    concept.relpath.clone(),
+                    LAPSED_VERIFICATION,
+                    vec![
+                        (
+                            "current_events_before".to_string(),
+                            prev.current_events.to_string(),
+                        ),
+                        ("current_events".to_string(), "0".to_string()),
+                    ],
+                    &run_id,
+                ));
             }
         }
     }
@@ -545,24 +544,24 @@ fn load_previous_queue(root: &Path) -> Vec<QueueItem> {
                 current = Some(QueueItem::new(value, "", Vec::new(), ""));
             }
             "reason" => {
-                if let Some(item) = current.as_mut() {
-                    if item.reason.is_empty() {
-                        item.reason = value;
-                    }
+                if let Some(item) = current.as_mut()
+                    && item.reason.is_empty()
+                {
+                    item.reason = value;
                 }
             }
             "first_raised" => {
-                if let Some(item) = current.as_mut() {
-                    if item.first_raised.is_empty() {
-                        item.first_raised = value;
-                    }
+                if let Some(item) = current.as_mut()
+                    && item.first_raised.is_empty()
+                {
+                    item.first_raised = value;
                 }
             }
             "state" => {
-                if let Some(item) = current.as_mut() {
-                    if let Some(state) = QueueState::from_name(&value) {
-                        item.state = state;
-                    }
+                if let Some(item) = current.as_mut()
+                    && let Some(state) = QueueState::from_name(&value)
+                {
+                    item.state = state;
                 }
             }
             _ => {}
@@ -596,12 +595,13 @@ fn scan_string_fields(text: &str) -> Vec<(String, String)> {
                 while j < bytes.len() && (bytes[j] as char).is_whitespace() {
                     j += 1;
                 }
-                if j < bytes.len() && bytes[j] == b'"' {
-                    if let Some((field_value, after)) = read_json_string(text, j) {
-                        out.push((value, field_value));
-                        i = after;
-                        continue;
-                    }
+                if j < bytes.len()
+                    && bytes[j] == b'"'
+                    && let Some((field_value, after)) = read_json_string(text, j)
+                {
+                    out.push((value, field_value));
+                    i = after;
+                    continue;
                 }
             }
             i = next;
@@ -815,13 +815,12 @@ fn regenerate_index(bundle: &Bundle, dir: &str) -> String {
     if dir.is_empty() {
         let mut out = String::new();
         if let Some(existing) = bundle.file("index.md") {
-            if let Ok(text) = std::fs::read_to_string(bundle.root.join("index.md")) {
-                if text.starts_with("---\n") {
-                    if let Some(end) = text[4..].find("\n---") {
-                        out.push_str(&text[..4 + end + 4]);
-                        out.push('\n');
-                    }
-                }
+            if let Ok(text) = std::fs::read_to_string(bundle.root.join("index.md"))
+                && let Some(body) = text.strip_prefix("---\n")
+                && let Some(end) = body.find("\n---")
+            {
+                out.push_str(&text[..4 + end + 4]);
+                out.push('\n');
             }
             let _ = existing;
         }
