@@ -24,6 +24,12 @@ pub const NO_REVIEW_DATE: &str = "NO REVIEW DATE";
 pub const TYPE_MISSING: &str = "TYPE MISSING";
 /// Reason code for an index that no longer matches its directory.
 pub const INDEX_DRIFT: &str = "INDEX DRIFT";
+/// Reason code for a semantic-layer definition that references a
+/// column the live schema no longer carries, or carries changed.
+/// The name is the working vocabulary of the cross-ecosystem
+/// grading programme, settled jointly with the trust auditor's
+/// design record; it changes by amendment, never silently.
+pub const DEFINITION_DRIFT: &str = "DEFINITION DRIFT";
 
 /// The state of one queue item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
