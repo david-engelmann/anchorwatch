@@ -73,6 +73,35 @@ fn entry<'a>(
 }
 
 #[test]
+fn a_crlf_bundle_migrates_with_its_types_read() {
+    // Register R1-08. A bundle written with carriage-return line
+    // endings used to yield no frontmatter spans at all, so every
+    // concept read as typeless and was excluded. The spans are
+    // read under either ending; the body rides across with its
+    // own endings untouched.
+    let dir = out_dir("crlf");
+    write_file(
+        &dir,
+        "index.md",
+        "---\r\nokf_version: \"0.3\"\r\ntitle: \"CRLF bundle\"\r\n---\r\n\r\n# CRLF bundle\r\n",
+    );
+    write_file(
+        &dir,
+        "notes/kept.md",
+        "---\r\ntype: Note\r\ntitle: \"Kept\"\r\n---\r\n\r\nBody line.\r\n",
+    );
+    write_file(&dir, "log.md", "# Bundle Update Log\r\n");
+    let out = out_dir("crlf-out");
+    let report = run_migration(&OkfNativeProfile, &dir, &out, "2026-11-24T00:00:00Z").unwrap();
+    assert_eq!(report.concepts_written, 1);
+    assert_eq!(entry(&report, "OKF concepts").unwrap().count, 1);
+    assert!(entry(&report, "Markdown files without a type").is_none());
+    let kept = std::fs::read_to_string(out.join("notes/kept.md")).unwrap();
+    assert!(kept.contains("type: Note"));
+    assert!(kept.contains("Body line.\r\n"), "body endings preserved");
+}
+
+#[test]
 fn a_pre_v03_bundle_migrates_with_its_paths_rewritten() {
     let source = fixture("basic");
     let out = out_dir("basic-out");
