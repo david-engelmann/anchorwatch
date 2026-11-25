@@ -324,6 +324,67 @@ fn two_claim_registries_are_reported_not_guessed() {
 }
 
 #[test]
+fn a_dash_bullet_index_is_a_link_list_not_prose() {
+    // Register R1-01. An index written with dash bullets is the
+    // same furniture as the engine's own star form, and the
+    // migrator's prose test has always exempted both. Before the
+    // fix the pass read this index as hand-written prose, left it
+    // untouched in apply mode, and its drift item could never
+    // close.
+    let dir = std::env::temp_dir().join(format!("anchorwatch-pass-dash-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(
+        &dir,
+        "concepts/a.md",
+        "---\ntype: Note\ntitle: \"A\"\nstale_after: 2027-01-01\n---\nbody a\n",
+    );
+    write_file(
+        &dir,
+        "concepts/b.md",
+        "---\ntype: Note\ntitle: \"B\"\nstale_after: 2027-01-01\n---\nbody b\n",
+    );
+    write_file(
+        &dir,
+        "index.md",
+        "---\nokf_version: \"0.3\"\ntitle: \"Fixture bundle\"\n---\n\n# Fixture bundle\n\n# concepts\n\n* [A](concepts/a.md)\n* [B](concepts/b.md)\n",
+    );
+    write_file(&dir, "concepts/index.md", "# concepts\n\n- [A](a.md)\n");
+    write_file(&dir, "log.md", "# Bundle Update Log\n");
+    let report = run_pass(&dir, "2026-11-24T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    let item = report
+        .queue
+        .iter()
+        .find(|item| item.concept == "concepts/index.md" && item.reason == INDEX_DRIFT)
+        .expect("the dash index drifts from its directory");
+    assert!(
+        item.evidence
+            .iter()
+            .any(|(k, v)| k == "hand_written_prose" && v == "false"),
+        "evidence: {:?}",
+        item.evidence
+    );
+    assert!(
+        report
+            .actions
+            .iter()
+            .any(|a| a == "index regenerated: concepts/index.md"),
+        "actions: {:?}",
+        report.actions
+    );
+    let regenerated = std::fs::read_to_string(dir.join("concepts/index.md")).unwrap();
+    assert!(regenerated.contains("* [B](b.md)"));
+    let second = run_pass(&dir, "2026-11-24T01:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    assert!(
+        !second
+            .queue
+            .iter()
+            .any(|item| item.concept == "concepts/index.md" && item.reason == INDEX_DRIFT),
+        "the regenerated index no longer drifts"
+    );
+}
+
+#[test]
 fn a_second_pass_observes_a_tier_drop() {
     let dir = fixture("tierdrop");
     let first = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
