@@ -235,6 +235,55 @@ fn an_output_overlapping_the_source_is_refused() {
 }
 
 #[test]
+fn a_non_empty_output_is_refused_and_an_empty_one_accepted() {
+    // Register R2-05. A migration writes a complete bundle, so
+    // writing into a directory that already holds files would
+    // leave ghost concepts standing under a manifest that does
+    // not name them. The refusal leaves the directory untouched;
+    // an existing empty directory is the ordinary case.
+    let dir = std::env::temp_dir().join(format!(
+        "anchorwatch-migrate-nonempty-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(
+        &dir,
+        "MEMORY.md",
+        "# Curated Memory\n\n## Rulings\n\nBody.\n",
+    );
+    let out = std::env::temp_dir().join(format!(
+        "anchorwatch-migrate-nonempty-out-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(&out).unwrap();
+    write_file(&out, "stray.md", "# Stray\n");
+    let err = run_migration(&ClaudeMemoryProfile, &dir, &out, "2026-11-24T00:00:00Z")
+        .expect_err("a non-empty output is refused");
+    assert!(err.contains("not empty"), "error: {err}");
+    assert!(
+        out.join("stray.md").exists(),
+        "nothing was written or removed"
+    );
+    assert!(!out.join("LOSS-LEDGER.md").exists());
+    let empty_out = std::env::temp_dir().join(format!(
+        "anchorwatch-migrate-empty-out2-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&empty_out);
+    std::fs::create_dir_all(&empty_out).unwrap();
+    let report = run_migration(
+        &ClaudeMemoryProfile,
+        &dir,
+        &empty_out,
+        "2026-11-24T00:00:00Z",
+    )
+    .unwrap();
+    assert_eq!(report.concepts_written, 2);
+}
+
+#[test]
 fn a_heading_inside_a_code_fence_does_not_split_a_section() {
     // Register R1-06. Section splitting used to break on any
     // heading-shaped line, including one inside a fenced code
