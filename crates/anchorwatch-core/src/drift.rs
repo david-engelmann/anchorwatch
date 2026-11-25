@@ -13,13 +13,17 @@
 //! when a later check no longer reports it.
 //!
 //! Both inputs arrive as exported files. The engine never connects
-//! to a warehouse and never holds a vendor credential. The first
-//! definition shape is the dbt semantic manifest, plain JSON in
-//! git, first in the grading programme's gradeability order. The
-//! second is the Snowflake semantic view YAML, which also declares
-//! a type per element, making type drift checkable where the dbt
-//! shape declares none. The live side is a JSON column listing in
-//! the shape this module documents, whatever tool exported it.
+//! to a warehouse and never holds a vendor credential. Definition
+//! shapes are read in the grading programme's gradeability order
+//! and routed on the document's own keys, never on its file name.
+//! First, the dbt semantic manifest, plain JSON in git. Second,
+//! the Snowflake semantic view YAML, which also declares a type
+//! per element, making type drift checkable where the dbt shape
+//! declares none. Third, the Databricks shapes, the metric view
+//! YAML and the Genie space's serialized JSON, whose declared
+//! column configurations are the space's checkable surface. The
+//! live side is a JSON column listing in the shape this module
+//! documents, whatever tool exported it.
 //!
 //! Until the real auditor publishes its drift interface, checks run
 //! against [`StubDriftAuditor`], which implements the comparison in
@@ -33,7 +37,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::auditor::Severity;
-use crate::json::{Json, parse};
+use crate::json::{Json, Parsed, parse};
 use crate::queue::{DEFINITION_DRIFT, QueueItem, QueueState, sort_queue};
 use crate::sha256::sha256_hex;
 use crate::time::parse_timestamp;
@@ -279,6 +283,10 @@ fn normalize_relation(name: &str) -> String {
 /// with no expression references the column of its own name.
 pub fn load_dbt_manifest(text: &str, source: &str, hash: String) -> Result<Definitions, String> {
     let root = parse(text).ok_or_else(|| format!("definitions do not parse as JSON: {source}"))?;
+    dbt_from_parsed(&root, source, hash)
+}
+
+fn dbt_from_parsed(root: &Parsed, source: &str, hash: String) -> Result<Definitions, String> {
     let models = root
         .get("semantic_models")
         .and_then(|v| v.as_arr())
@@ -594,6 +602,10 @@ fn expr_column(expr: &str) -> Option<String> {
 pub fn load_snowflake_view(text: &str, source: &str, hash: String) -> Result<Definitions, String> {
     let root = parse_yaml(text)
         .ok_or_else(|| format!("definitions do not parse as semantic view YAML: {source}"))?;
+    snowflake_from_yaml(&root, source, hash)
+}
+
+fn snowflake_from_yaml(root: &Yaml, source: &str, hash: String) -> Result<Definitions, String> {
     let tables = root
         .get("tables")
         .and_then(|v| v.as_list())
@@ -659,6 +671,193 @@ pub fn load_snowflake_view(text: &str, source: &str, hash: String) -> Result<Def
         models: tables.len(),
         references,
     })
+}
+
+/// Resolves a metric view element expression to the relation and
+/// column it references. An unqualified plain identifier reads the
+/// view's source. A qualified one reads the join it names, or the
+/// source when it names the source itself. Anything computed, or
+/// qualified by a name the view does not declare, is not a
+/// reference this reader can key honestly, and it is skipped.
+fn resolve_metric_ref(
+    expr: &str,
+    main_relation: &str,
+    joins: &BTreeMap<String, String>,
+) -> Option<(String, String)> {
+    let expr = expr.trim();
+    if let Some(dot) = expr.rfind('.') {
+        let (qualifier, column) = (&expr[..dot], &expr[dot + 1..]);
+        if !is_plain_identifier(column) {
+            return None;
+        }
+        if let Some(relation) = joins.get(qualifier) {
+            return Some((relation.clone(), column.to_string()));
+        }
+        let main_table = main_relation.rsplit('.').next().unwrap_or(main_relation);
+        if qualifier == main_table || qualifier == main_relation {
+            return Some((main_relation.to_string(), column.to_string()));
+        }
+        return None;
+    }
+    if is_plain_identifier(expr) {
+        Some((main_relation.to_string(), expr.to_string()))
+    } else {
+        None
+    }
+}
+
+/// Loads a Databricks metric view YAML definition. The view body
+/// carries no name of its own, so artifacts name the source
+/// relation's table segment. Fields, under the fields key in
+/// specification 1.1 and the dimensions key before it, and any
+/// measure whose expression is a plain reference, name columns of
+/// the source or of a declared join.
+fn metric_view_from_yaml(root: &Yaml, source: &str, hash: String) -> Result<Definitions, String> {
+    let source_relation = root
+        .get("source")
+        .and_then(|v| v.as_scalar())
+        .ok_or_else(|| format!("no source in {source}"))?;
+    let main_relation = normalize_relation(source_relation);
+    let mut joins: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(list) = root.get("joins").and_then(|v| v.as_list()) {
+        for join in list {
+            if let (Some(name), Some(joined)) = (
+                join.get("name").and_then(|v| v.as_scalar()),
+                join.get("source").and_then(|v| v.as_scalar()),
+            ) {
+                joins.insert(name.to_string(), normalize_relation(joined));
+            }
+        }
+    }
+    let model = main_relation
+        .rsplit('.')
+        .next()
+        .unwrap_or(&main_relation)
+        .to_string();
+    let fields = root
+        .get("fields")
+        .and_then(|v| v.as_list())
+        .or_else(|| root.get("dimensions").and_then(|v| v.as_list()));
+    let mut references = Vec::new();
+    for (elements, kind) in [
+        (fields, "field"),
+        (root.get("measures").and_then(|v| v.as_list()), "measure"),
+    ] {
+        let Some(elements) = elements else {
+            continue;
+        };
+        for element in elements {
+            let (Some(name), Some(expr)) = (
+                element.get("name").and_then(|v| v.as_scalar()),
+                element.get("expr").and_then(|v| v.as_scalar()),
+            ) else {
+                continue;
+            };
+            let Some((relation, column)) = resolve_metric_ref(expr, &main_relation, &joins) else {
+                continue;
+            };
+            references.push(ColumnRef {
+                artifact: format!("{model}.{kind}.{name}"),
+                model: model.clone(),
+                kind: kind.to_string(),
+                relation,
+                column,
+                declared_type: None,
+            });
+        }
+    }
+    references.sort_by(|a, b| a.artifact.cmp(&b.artifact));
+    Ok(Definitions {
+        format: "databricks-metric-view".to_string(),
+        source: source.to_string(),
+        hash,
+        models: 1,
+        references,
+    })
+}
+
+/// Loads a Databricks Genie space's serialized JSON. The space's
+/// declared column configurations, the columns of each data source
+/// table the space is configured to use, are its checkable column
+/// surface. Its stored questions and benchmark answers are
+/// behavioural ground truth for the auditor's grading design, not
+/// upkeep references, and its free-form SQL snippets name no single
+/// source table, so neither is read here.
+fn genie_from_parsed(root: &Parsed, source: &str, hash: String) -> Result<Definitions, String> {
+    let tables = root
+        .get("data_sources")
+        .and_then(|v| v.get("tables"))
+        .and_then(|v| v.as_arr())
+        .ok_or_else(|| format!("no data_sources tables in {source}"))?;
+    let mut references = Vec::new();
+    for table in tables {
+        let Some(identifier) = table.get("identifier").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let relation = normalize_relation(identifier);
+        let model = relation.rsplit('.').next().unwrap_or(&relation).to_string();
+        let Some(configs) = table.get("column_configs").and_then(|v| v.as_arr()) else {
+            continue;
+        };
+        for config in configs {
+            let Some(name) = config.get("name").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            references.push(ColumnRef {
+                artifact: format!("{model}.column.{name}"),
+                model: model.clone(),
+                kind: "column".to_string(),
+                relation: relation.clone(),
+                column: name.to_string(),
+                declared_type: None,
+            });
+        }
+    }
+    references.sort_by(|a, b| a.artifact.cmp(&b.artifact));
+    Ok(Definitions {
+        format: "databricks-genie-space".to_string(),
+        source: source.to_string(),
+        hash,
+        models: tables.len(),
+        references,
+    })
+}
+
+/// Loads a JSON definition snapshot, routing on the document's own
+/// keys. A document with data sources is a Genie space; a document
+/// with semantic models is a dbt manifest.
+pub fn load_json_definitions(
+    text: &str,
+    source: &str,
+    hash: String,
+) -> Result<Definitions, String> {
+    let root = parse(text).ok_or_else(|| format!("definitions do not parse as JSON: {source}"))?;
+    if root.get("data_sources").is_some() {
+        genie_from_parsed(&root, source, hash)
+    } else if root.get("semantic_models").is_some() {
+        dbt_from_parsed(&root, source, hash)
+    } else {
+        Err(format!("unrecognized JSON definition shape in {source}"))
+    }
+}
+
+/// Loads a YAML definition snapshot, routing on the document's own
+/// keys. A document with a tables list is a Snowflake semantic
+/// view; a document with a source is a Databricks metric view.
+pub fn load_yaml_definitions(
+    text: &str,
+    source: &str,
+    hash: String,
+) -> Result<Definitions, String> {
+    let root =
+        parse_yaml(text).ok_or_else(|| format!("definitions do not parse as YAML: {source}"))?;
+    if root.get("tables").and_then(|v| v.as_list()).is_some() {
+        snowflake_from_yaml(&root, source, hash)
+    } else if root.get("source").and_then(|v| v.as_scalar()).is_some() {
+        metric_view_from_yaml(&root, source, hash)
+    } else {
+        Err(format!("unrecognized YAML definition shape in {source}"))
+    }
 }
 
 /// The report of one drift check.
@@ -847,9 +1046,9 @@ pub fn run_drift_check(
         .map_err(|_| format!("live schema is not UTF-8: {live_label}"))?;
     let definitions = match definitions_path.extension().and_then(|e| e.to_str()) {
         Some("yaml") | Some("yml") => {
-            load_snowflake_view(&definitions_text, &definitions_label, definitions_hash)?
+            load_yaml_definitions(&definitions_text, &definitions_label, definitions_hash)?
         }
-        _ => load_dbt_manifest(&definitions_text, &definitions_label, definitions_hash)?,
+        _ => load_json_definitions(&definitions_text, &definitions_label, definitions_hash)?,
     };
     let live = load_live_schema(&live_text, &live_label, live_hash)?;
     let run_id = format!(
@@ -986,7 +1185,8 @@ fn write_drift_state(state_dir: &Path, report: &DriftReport) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        DriftAuditor, StubDriftAuditor, load_dbt_manifest, load_live_schema, load_snowflake_view,
+        DriftAuditor, StubDriftAuditor, load_dbt_manifest, load_json_definitions, load_live_schema,
+        load_snowflake_view, load_yaml_definitions,
     };
 
     const MANIFEST: &str = r#"{
@@ -1112,6 +1312,80 @@ tables:
                 .iter()
                 .any(|(k, v)| k == "live_type" && v == "TEXT")
         );
+    }
+
+    const METRIC_VIEW: &str = r#"version: 1.1
+source: main.sales.orders
+filter: "order_date >= '2024-01-01'"
+fields:
+  - name: channel
+    expr: channel
+  - name: ordered_on
+    expr: order_date
+  - name: region
+    expr: customers.region
+joins:
+  - name: customers
+    source: main.sales.customers
+    on: orders.customer_id = customers.id
+measures:
+  - name: revenue
+    expr: SUM(amount)
+"#;
+
+    const METRIC_LIVE: &str = r#"{
+      "tables": {
+        "main.sales.orders": {"columns": [{"name": "channel", "type": "text"}, {"name": "orderdate", "type": "date"}]},
+        "main.sales.customers": {"columns": [{"name": "region", "type": "text"}]}
+      }
+    }"#;
+
+    #[test]
+    fn the_metric_view_routes_by_shape_and_resolves_joins() {
+        let definitions = load_yaml_definitions(METRIC_VIEW, "view.yaml", "d".to_string()).unwrap();
+        assert_eq!(definitions.format, "databricks-metric-view");
+        // The aggregate measure is computed and not a reference.
+        assert_eq!(definitions.references.len(), 3);
+        let region = definitions
+            .references
+            .iter()
+            .find(|r| r.artifact == "orders.field.region")
+            .unwrap();
+        assert_eq!(region.relation, "main.sales.customers");
+        let live = load_live_schema(METRIC_LIVE, "live.json", "l".to_string()).unwrap();
+        let findings = StubDriftAuditor.audit(&definitions, &live);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule_id, "AW-DRF-02");
+        assert_eq!(findings[0].artifact, "orders.field.ordered_on");
+    }
+
+    const GENIE: &str = r#"{
+      "version": 2,
+      "data_sources": {"tables": [
+        {"identifier": "main.sales.orders", "column_configs": [{"name": "order_id"}, {"name": "amount"}]},
+        {"identifier": "main.sales.customers", "column_configs": [{"name": "region"}]}
+      ]},
+      "benchmarks": {"questions": []}
+    }"#;
+
+    const GENIE_LIVE: &str = r#"{
+      "tables": {
+        "main.sales.orders": {"columns": [{"name": "order_id", "type": "integer"}]},
+        "main.sales.customers": {"columns": [{"name": "region", "type": "text"}]}
+      }
+    }"#;
+
+    #[test]
+    fn the_genie_space_routes_by_shape_and_reads_column_configs() {
+        let definitions = load_json_definitions(GENIE, "space.json", "d".to_string()).unwrap();
+        assert_eq!(definitions.format, "databricks-genie-space");
+        assert_eq!(definitions.models, 2);
+        assert_eq!(definitions.references.len(), 3);
+        let live = load_live_schema(GENIE_LIVE, "live.json", "l".to_string()).unwrap();
+        let findings = StubDriftAuditor.audit(&definitions, &live);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule_id, "AW-DRF-01");
+        assert_eq!(findings[0].artifact, "orders.column.amount");
     }
 
     #[test]
