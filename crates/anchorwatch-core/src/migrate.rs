@@ -698,27 +698,91 @@ impl Profile for ClaudeMemoryProfile {
                 concepts.push(concept);
             } else if rel == "MEMORY.md" {
                 curated += 1;
-                concepts.push(convert_whole(
-                    &path,
-                    rel,
-                    &text,
-                    "Curated Memory",
-                    "curated/memory.md",
-                    None,
-                    as_of,
-                ));
+                let sections = split_sections(&text);
+                if sections.iter().all(|(heading, _)| heading.is_none()) {
+                    concepts.push(convert_whole(
+                        &path,
+                        rel,
+                        &text,
+                        "Curated Memory",
+                        "curated/memory.md",
+                        None,
+                        as_of,
+                    ));
+                } else {
+                    let mut number = 0usize;
+                    for (heading, body) in &sections {
+                        match heading {
+                            Some(heading) => {
+                                number += 1;
+                                concepts.push(convert_section(
+                                    &path,
+                                    &format!("MEMORY.md section {number}"),
+                                    "Curated Memory",
+                                    heading,
+                                    body,
+                                    &format!("curated/{number:02}-{}.md", slugify(heading)),
+                                    as_of,
+                                ));
+                            }
+                            None => {
+                                concepts.push(convert_section(
+                                    &path,
+                                    "MEMORY.md preamble",
+                                    "Curated Memory",
+                                    "Preamble",
+                                    body,
+                                    "curated/00-preamble.md",
+                                    as_of,
+                                ));
+                            }
+                        }
+                    }
+                }
             } else if parent == "memory" && is_dated_log(base) {
                 logs += 1;
                 let stem = base.trim_end_matches(".md");
-                concepts.push(convert_whole(
-                    &path,
-                    rel,
-                    &text,
-                    "Daily Log",
-                    &format!("logs/{base}"),
-                    Some(format!("Memory log {stem}")),
-                    as_of,
-                ));
+                let sections = split_sections(&text);
+                if sections.iter().all(|(heading, _)| heading.is_none()) {
+                    concepts.push(convert_whole(
+                        &path,
+                        rel,
+                        &text,
+                        "Daily Log",
+                        &format!("logs/{base}"),
+                        Some(format!("Memory log {stem}")),
+                        as_of,
+                    ));
+                } else {
+                    let mut number = 0usize;
+                    for (heading, body) in &sections {
+                        match heading {
+                            Some(heading) => {
+                                number += 1;
+                                concepts.push(convert_section(
+                                    &path,
+                                    &format!("{rel} section {number}"),
+                                    "Daily Log",
+                                    heading,
+                                    body,
+                                    &format!("logs/{stem}-{number:02}-{}.md", slugify(heading)),
+                                    as_of,
+                                ));
+                            }
+                            None => {
+                                concepts.push(convert_section(
+                                    &path,
+                                    &format!("{rel} preamble"),
+                                    "Daily Log",
+                                    &format!("Memory log {stem} preamble"),
+                                    body,
+                                    &format!("logs/{stem}-00-preamble.md"),
+                                    as_of,
+                                ));
+                            }
+                        }
+                    }
+                }
             } else {
                 unclassified += 1;
                 concepts.push(convert_whole(&path, rel, &text, "Note", rel, None, as_of));
@@ -766,11 +830,11 @@ impl Profile for ClaudeMemoryProfile {
             LedgerDraft {
                 construct: "curated memory file".to_string(),
                 count: curated,
-                disposition: Disposition::Approximated,
-                target: "one Curated Memory concept in whole-file mode".to_string(),
-                reason: "the file converts whole in this slice, so its sections gain no individual concepts and progressive disclosure over them is deferred, with nothing lost.".to_string(),
+                disposition: Disposition::Mapped,
+                target: "one Curated Memory concept per section, split at the file's own headings".to_string(),
+                reason: "the file divides at its level-two headings into numbered section concepts under the prototype builder's slug scheme, any preamble becomes a section of its own rather than being dropped, and a file with no headings converts whole.".to_string(),
                 load_bearing: false,
-                recovery: "section-level splitting by the file's own headings".to_string(),
+                recovery: "none needed".to_string(),
             },
         );
         pair(
@@ -778,11 +842,11 @@ impl Profile for ClaudeMemoryProfile {
             LedgerDraft {
                 construct: "daily log files".to_string(),
                 count: logs,
-                disposition: Disposition::Approximated,
-                target: "Daily Log concepts in whole-file mode".to_string(),
-                reason: "a whole log as one concept defeats progressive disclosure, and claim-level splitting is impossible because claim supersession is not machine-readable in the files.".to_string(),
+                disposition: Disposition::Mapped,
+                target: "one Daily Log concept per section, split at the log's own headings".to_string(),
+                reason: "a log divides at its level-two headings into numbered section concepts, and a log with no headings converts whole, as the prototype's single log did. Claim-level splitting stays deferred until a lineage source exists.".to_string(),
                 load_bearing: false,
-                recovery: "section-level splitting by the log's own headings".to_string(),
+                recovery: "none needed".to_string(),
             },
         );
         pair(
@@ -1060,6 +1124,94 @@ fn convert_whole(
         relpath: out_rel.to_string(),
         concept_type: concept_type.to_string(),
         title,
+        content,
+    }
+}
+
+/// Splits a document at its level-two headings. Each section's
+/// body includes its own heading line and runs to the next
+/// heading. Content before the first heading comes back as a
+/// headingless first section, and only when it has real content.
+fn split_sections(text: &str) -> Vec<(Option<String>, String)> {
+    let mut sections: Vec<(Option<String>, String)> = Vec::new();
+    let mut current: Option<(Option<String>, String)> = None;
+    for line in text.split_inclusive('\n') {
+        if let Some(heading) = line.strip_prefix("## ") {
+            if let Some(done) = current.take() {
+                sections.push(done);
+            }
+            current = Some((Some(heading.trim().to_string()), line.to_string()));
+        } else {
+            match &mut current {
+                Some((_, body)) => body.push_str(line),
+                None => current = Some((None, line.to_string())),
+            }
+        }
+    }
+    if let Some(done) = current.take() {
+        sections.push(done);
+    }
+    if sections
+        .first()
+        .is_some_and(|(heading, body)| heading.is_none() && body.trim().is_empty())
+    {
+        sections.remove(0);
+    }
+    sections
+}
+
+/// The prototype builder's slug scheme: lowercase, runs of
+/// characters outside a-z and 0-9 become one hyphen, hyphens
+/// trimmed from both ends, cut at sixty characters.
+fn slugify(heading: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_hyphen = true;
+    for c in heading.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+            last_was_hyphen = false;
+        } else if !last_was_hyphen {
+            slug.push('-');
+            last_was_hyphen = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    slug.chars().take(60).collect()
+}
+
+/// Converts one section of a split file under the migrator's
+/// own frontmatter, with the source key naming the section it
+/// came from, following the prototype builder's convention.
+fn convert_section(
+    path: &Path,
+    source_label: &str,
+    concept_type: &str,
+    title: &str,
+    body: &str,
+    out_rel: &str,
+    as_of: &str,
+) -> ConvertedConcept {
+    let mut content = String::new();
+    content.push_str("---\n");
+    content.push_str(&format!("type: {}\n", quoted(concept_type)));
+    content.push_str(&format!("title: {}\n", quoted(title)));
+    content.push_str(&format!(
+        "generated: {{ by: \"anchorwatch\", at: {} }}\n",
+        quoted(&modified_at(path))
+    ));
+    content.push_str(&format!("x-anchorwatch-source: {}\n", quoted(source_label)));
+    content.push_str(&format!("x-anchorwatch-migrated-at: {}\n", quoted(as_of)));
+    content.push_str("---\n\n");
+    content.push_str(body);
+    if !body.ends_with('\n') {
+        content.push('\n');
+    }
+    ConvertedConcept {
+        relpath: out_rel.to_string(),
+        concept_type: concept_type.to_string(),
+        title: title.to_string(),
         content,
     }
 }

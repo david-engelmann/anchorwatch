@@ -42,7 +42,7 @@ fn fixture(name: &str) -> PathBuf {
     write_file(
         &dir,
         "memory/2026-09-16.md",
-        "# 2026-09-16\n\nAn entry. It was superseded by a later entry.\n",
+        "# 2026-09-16\n\nAn entry. It was superseded by a later entry.\n\n## Evening\n\nA later entry.\n",
     );
     write_file(&dir, "memory/bank/bank.md", "- a distilled bullet\n");
     write_file(&dir, "notes/random.md", "# Random Notes\n\nLoose text.\n");
@@ -77,7 +77,7 @@ fn the_fixture_tree_converts_with_an_honest_ledger() {
     let out = source.join("bundle-out");
     let report =
         run_migration(&ClaudeMemoryProfile, &source, &out, "2026-11-24T00:00:00Z").unwrap();
-    assert_eq!(report.concepts_written, 5);
+    assert_eq!(report.concepts_written, 7);
     assert!(report.reconciliation_ok);
     // The ledger is honest and the load-bearing gate fails
     // visibly: prose supersession and freshness are lost.
@@ -98,7 +98,27 @@ fn the_fixture_tree_converts_with_an_honest_ledger() {
         .iter()
         .find(|e| e.construct == "freshness expectations")
         .unwrap();
-    assert_eq!(freshness.count, 5);
+    assert_eq!(freshness.count, 7);
+    // Splitting is built, so both split files now map.
+    for construct in ["curated memory file", "daily log files"] {
+        let split = report
+            .entries
+            .iter()
+            .find(|e| e.construct == construct)
+            .unwrap();
+        assert_eq!(split.disposition, Disposition::Mapped);
+    }
+    // The curated file split at its own heading, preamble kept.
+    let rulings = std::fs::read_to_string(out.join("curated/01-rulings.md")).unwrap();
+    assert!(rulings.contains("title: \"Rulings\""));
+    assert!(rulings.contains("x-anchorwatch-source: \"MEMORY.md section 1\""));
+    assert!(rulings.contains("## Rulings"));
+    assert!(rulings.contains("A ruling stands here."));
+    assert!(out.join("curated/00-preamble.md").exists());
+    // The daily log split at its own heading too.
+    let evening = std::fs::read_to_string(out.join("logs/2026-09-16-01-evening.md")).unwrap();
+    assert!(evening.contains("## Evening"));
+    assert!(out.join("logs/2026-09-16-00-preamble.md").exists());
     // The converted person carries the mapping and the extensions.
     let ada = std::fs::read_to_string(out.join("people/ada.md")).unwrap();
     assert!(ada.contains("type: \"Person\""));
@@ -115,7 +135,7 @@ fn the_fixture_tree_converts_with_an_honest_ledger() {
     assert!(out.join("loss-ledger.json").exists());
     let manifest = std::fs::read_to_string(out.join(".recension/state.json")).unwrap();
     assert!(manifest.contains("\"people/ada.md\": \"Person\""));
-    assert!(manifest.contains("\"curated/memory.md\": \"Curated Memory\""));
+    assert!(manifest.contains("\"curated/01-rulings.md\": \"Curated Memory\""));
 }
 
 #[test]
@@ -168,10 +188,10 @@ fn the_migrated_bundle_stands_up_under_an_upkeep_pass() {
     let out = source.join("bundle-out");
     run_migration(&ClaudeMemoryProfile, &source, &out, "2026-11-24T00:00:00Z").unwrap();
     let report = run_pass(&out, "2026-11-25T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
-    assert_eq!(report.concept_count, 5);
+    assert_eq!(report.concept_count, 7);
     // No drift, no defects: only the honest freshness consequence,
     // one NO REVIEW DATE item per concept.
-    assert_eq!(report.queue.len(), 5);
+    assert_eq!(report.queue.len(), 7);
     assert!(
         report
             .queue
