@@ -37,7 +37,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::auditor::Severity;
-use crate::json::{Json, parse};
+use crate::json::{Json, Parsed, parse};
 use crate::queue::{DEFINITION_DRIFT, QueueItem, QueueState, sort_queue};
 use crate::sha256::sha256_hex;
 use crate::time::parse_timestamp;
