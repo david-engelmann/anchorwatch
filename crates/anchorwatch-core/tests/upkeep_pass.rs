@@ -95,7 +95,7 @@ fn the_fixture_raises_the_expected_queue() {
         report.queue
     );
     // A dry run writes nothing.
-    assert!(!dir.join("upkeep").join("queue.json").exists());
+    assert!(!dir.join(".recension").join("queue.json").exists());
 }
 
 #[test]
@@ -203,11 +203,46 @@ fn apply_restores_a_stripped_type_key_and_leaves_the_blockless_file() {
 }
 
 #[test]
+fn a_legacy_queue_migrates_to_the_dot_directory() {
+    let dir = fixture("migration");
+    // A queue written by an older pass, in the legacy home, with a
+    // first-raised run the merge must preserve across the move.
+    write_file(
+        &dir,
+        "upkeep/queue.json",
+        "{\"as_of\": \"2026-11-20T00:00:00Z\", \"items\": [{\"concept\": \"concepts/b.md\", \"evidence\": {}, \"first_raised\": \"run-legacy00000\", \"last_confirmed\": \"run-legacy00000\", \"priority\": 2, \"reason\": \"NO REVIEW DATE\", \"state\": \"open\"}], \"run_id\": \"run-legacy00000\"}",
+    );
+    write_file(&dir, "upkeep/queue.md", "# Re-verification queue\n");
+    let report = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    let item = report
+        .queue
+        .iter()
+        .find(|item| item.concept == "concepts/b.md" && item.reason == NO_REVIEW_DATE)
+        .unwrap();
+    assert_eq!(item.first_raised, "run-legacy00000");
+    assert!(dir.join(".recension").join("queue.json").exists());
+    assert!(dir.join(".recension").join("queue.md").exists());
+    assert!(!dir.join("upkeep").join("queue.json").exists());
+    assert!(!dir.join("upkeep").join("queue.md").exists());
+    assert!(
+        report
+            .actions
+            .iter()
+            .any(|a| a == "legacy queue files under upkeep/ removed after the move to .recension/"),
+        "actions: {:?}",
+        report.actions
+    );
+    // The migrated file itself carries the preserved first run.
+    let written = std::fs::read_to_string(dir.join(".recension").join("queue.json")).unwrap();
+    assert!(written.contains("run-legacy00000"));
+}
+
+#[test]
 fn a_second_pass_observes_a_tier_drop() {
     let dir = fixture("tierdrop");
     let first = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
     assert_eq!(first.concept_count, 4);
-    assert!(dir.join("upkeep").join("queue.json").exists());
+    assert!(dir.join(".recension").join("queue.json").exists());
     assert!(dir.join(".recension").join("pass-state.json").exists());
     // The concept is regenerated after its verification, so the
     // previously current human event lapses.
