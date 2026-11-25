@@ -15,7 +15,7 @@
 //! the point.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::json::Json;
 use crate::sha256::sha256_hex;
@@ -314,6 +314,22 @@ pub fn run_migration(
     if !source.is_dir() {
         return Err(format!("source is not a directory: {}", source.display()));
     }
+    // The output must not sit inside the source tree, nor the
+    // source inside the output. A run writes its bundle at the
+    // output, and a later run over the same source would ingest
+    // the earlier bundle as source material, so the overlap is
+    // refused before anything is read or written. The comparison
+    // runs on resolved paths, so different spellings of the same
+    // directory cannot slip past it.
+    let source_real = resolve_path(source);
+    let out_real = resolve_path(out);
+    if out_real.starts_with(&source_real) || source_real.starts_with(&out_real) {
+        return Err(format!(
+            "output directory {} and source directory {} overlap; refusing to migrate",
+            out.display(),
+            source.display()
+        ));
+    }
     let snapshot = source_snapshot(source)?;
     let run_material = format!("{snapshot}|{as_of}|{}", profile.name());
     let run_id = format!("run-{}", &sha256_hex(run_material.as_bytes())[..12]);
@@ -551,6 +567,36 @@ fn parent_dir(relpath: &str) -> String {
     match relpath.rfind('/') {
         Some(i) => relpath[..i].to_string(),
         None => String::new(),
+    }
+}
+
+/// Resolves a path for comparison: canonical when the path
+/// exists, and when it does not, the canonical form of its
+/// nearest existing ancestor with the remaining components
+/// re-appended, so a not-yet-created output directory still
+/// compares honestly against the source tree.
+fn resolve_path(path: &Path) -> PathBuf {
+    if let Ok(real) = std::fs::canonicalize(path) {
+        return real;
+    }
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut cursor = path;
+    loop {
+        match std::fs::canonicalize(cursor) {
+            Ok(mut real) => {
+                for part in tail.iter().rev() {
+                    real.push(part);
+                }
+                return real;
+            }
+            Err(_) => match (cursor.file_name(), cursor.parent()) {
+                (Some(name), Some(parent)) => {
+                    tail.push(name.to_os_string());
+                    cursor = parent;
+                }
+                _ => return path.to_path_buf(),
+            },
+        }
     }
 }
 

@@ -81,7 +81,11 @@ fn tree_bytes(root: &Path) -> Vec<(String, Vec<u8>)> {
 #[test]
 fn the_fixture_tree_converts_with_an_honest_ledger() {
     let source = fixture("basic");
-    let out = source.join("bundle-out");
+    let out = std::env::temp_dir().join(format!(
+        "anchorwatch-migrate-basic-out-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&out);
     let report =
         run_migration(&ClaudeMemoryProfile, &source, &out, "2026-11-24T00:00:00Z").unwrap();
     assert_eq!(report.concepts_written, 7);
@@ -180,13 +184,54 @@ fn an_empty_tree_fails_the_honesty_gate() {
         std::env::temp_dir().join(format!("anchorwatch-migrate-empty-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&source);
     std::fs::create_dir_all(&source).unwrap();
-    let out = source.join("bundle-out");
+    let out = std::env::temp_dir().join(format!(
+        "anchorwatch-migrate-empty-out-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&out);
     let report =
         run_migration(&ClaudeMemoryProfile, &source, &out, "2026-11-24T00:00:00Z").unwrap();
     assert_eq!(report.concepts_written, 0);
     assert!(report.entries.is_empty());
     assert!(report.honesty_gate_failed);
     assert!(report.gate_failed);
+}
+
+#[test]
+fn an_output_overlapping_the_source_is_refused() {
+    // Register R1-07. A migration writes its bundle at the
+    // output, and a later run over the same source would ingest
+    // that bundle as source material. The overlap is refused
+    // before anything is written, in either direction.
+    let dir = std::env::temp_dir().join(format!(
+        "anchorwatch-migrate-overlap-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(
+        &dir,
+        "MEMORY.md",
+        "# Curated Memory\n\n## Rulings\n\nBody.\n",
+    );
+    let inside = dir.join("bundle-out");
+    let err = run_migration(&ClaudeMemoryProfile, &dir, &inside, "2026-11-24T00:00:00Z")
+        .expect_err("an output inside the source is refused");
+    assert!(err.contains("overlap"), "error: {err}");
+    assert!(!inside.exists(), "nothing was written");
+    write_file(
+        &dir,
+        "sub/MEMORY.md",
+        "# Curated Memory\n\n## Rulings\n\nBody.\n",
+    );
+    let err = run_migration(
+        &ClaudeMemoryProfile,
+        &dir.join("sub"),
+        &dir,
+        "2026-11-24T00:00:00Z",
+    )
+    .expect_err("a source inside the output is refused");
+    assert!(err.contains("overlap"), "error: {err}");
 }
 
 #[test]
@@ -204,7 +249,11 @@ fn a_heading_inside_a_code_fence_does_not_split_a_section() {
         "MEMORY.md",
         "# Curated Memory\n\n## Code sample\n\nText.\n\n```\n## Not a heading\nmore code\n```\n\nAfter.\n",
     );
-    let out = dir.join("bundle-out");
+    let out = std::env::temp_dir().join(format!(
+        "anchorwatch-migrate-fence-out-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&out);
     let report = run_migration(&ClaudeMemoryProfile, &dir, &out, "2026-11-24T00:00:00Z").unwrap();
     assert_eq!(report.concepts_written, 2);
     let section = std::fs::read_to_string(out.join("curated/01-code-sample.md")).unwrap();
@@ -229,7 +278,11 @@ fn area_profile_and_history_files_become_profile_concepts() {
         "memory/travel/HISTORY.md",
         "# Travel History\n\nPast trips.\n",
     );
-    let out = dir.join("bundle-out");
+    let out = std::env::temp_dir().join(format!(
+        "anchorwatch-migrate-areas-out-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&out);
     let report = run_migration(&ClaudeMemoryProfile, &dir, &out, "2026-11-24T00:00:00Z").unwrap();
     assert_eq!(report.concepts_written, 2);
     let area = report
@@ -247,7 +300,11 @@ fn area_profile_and_history_files_become_profile_concepts() {
 #[test]
 fn the_migrated_bundle_stands_up_under_an_upkeep_pass() {
     let source = fixture("upkeep");
-    let out = source.join("bundle-out");
+    let out = std::env::temp_dir().join(format!(
+        "anchorwatch-migrate-upkeep-out-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&out);
     run_migration(&ClaudeMemoryProfile, &source, &out, "2026-11-24T00:00:00Z").unwrap();
     let report = run_pass(&out, "2026-11-25T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
     assert_eq!(report.concept_count, 7);
