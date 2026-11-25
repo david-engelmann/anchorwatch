@@ -198,12 +198,21 @@ pub fn parse_document(text: &str) -> (Frontmatter, bool) {
 }
 
 fn clean_scalar(value: &str) -> String {
+    // One pair of surrounding quotes of either kind is the
+    // value's quoting, not its content, the same rule the
+    // migrator's reader applies. A single-quoted target read
+    // with its quotes attached would fail its bundle lookup
+    // and draw findings the bundle does not deserve.
     let value = value.trim();
-    let value = value
-        .strip_prefix('"')
-        .and_then(|v| v.strip_suffix('"'))
-        .unwrap_or(value);
-    value.to_string()
+    let bytes = value.as_bytes();
+    if value.len() >= 2
+        && ((bytes[0] == b'"' && bytes[value.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\''))
+    {
+        value[1..value.len() - 1].to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 fn flow_value(flow: &str, wanted: &str) -> Option<String> {
@@ -246,6 +255,17 @@ mod tests {
             "---\ntype: Note\nverified: { by: \"human:ada\", at: \"2026-11-02T09:00:00Z\" }\n---\n";
         let (fm, _) = parse_document(flow);
         assert_eq!(fm.verified.len(), 1);
+    }
+
+    #[test]
+    fn reads_single_quoted_scalars_as_their_values() {
+        let doc = "---\ntype: 'Note'\ntitle: 'Ada'\nstatus: 'deprecated'\nsuperseded_by: 'people/grace.md'\n---\nbody\n";
+        let (fm, present) = parse_document(doc);
+        assert!(present);
+        assert_eq!(fm.concept_type.as_deref(), Some("Note"));
+        assert_eq!(fm.title.as_deref(), Some("Ada"));
+        assert_eq!(fm.status.as_deref(), Some("deprecated"));
+        assert_eq!(fm.superseded_by.as_deref(), Some("people/grace.md"));
     }
 
     #[test]

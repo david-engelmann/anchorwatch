@@ -453,6 +453,29 @@ mod tests {
     }
 
     #[test]
+    fn a_single_quoted_supersession_target_resolves() {
+        // Register R3-01. Read with its quotes attached, the
+        // target would miss its bundle lookup and draw a
+        // dangling-target finding the bundle does not deserve.
+        let (_dir, bundle) = fixture(
+            "quoted-target",
+            &[
+                (
+                    "a.md",
+                    "---\ntype: Note\nstatus: deprecated\nsuperseded_by: 'b.md'\n---\nbody\n",
+                ),
+                ("b.md", "---\ntype: Note\n---\nbody\n"),
+            ],
+        );
+        let report = StubAuditor.audit(&bundle, "2026-11-21T00:00:00Z");
+        assert!(
+            report.findings.is_empty(),
+            "findings: {:?}",
+            report.findings
+        );
+    }
+
+    #[test]
     fn a_dangling_supersession_target_is_a_finding() {
         let (_dir, bundle) = fixture(
             "dangling",
