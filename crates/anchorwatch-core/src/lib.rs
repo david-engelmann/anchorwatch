@@ -19,6 +19,7 @@ pub mod bundle;
 pub mod drift;
 pub mod frontmatter;
 pub mod json;
+pub mod migrate;
 pub mod queue;
 pub mod sha256;
 pub mod time;

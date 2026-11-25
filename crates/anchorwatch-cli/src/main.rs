@@ -1,19 +1,23 @@
 //! The anchorwatch command line entry point.
 //!
-//! Two subcommands exist: `upkeep`, which runs one upkeep pass over
-//! a bundle at a pinned as-of instant, and `drift`, which runs one
-//! definition-versus-live-schema drift check over exported semantic
-//! layer snapshots. Both are dry runs unless `--apply` is given,
-//! and both print their report as JSON, or as Markdown with
-//! `--format md`. The auditors are the sanctioned stubs until the
-//! real trust auditor publishes its interfaces; every report names
-//! the auditor it ran against.
+//! Three subcommands exist: `upkeep`, which runs one upkeep pass
+//! over a bundle at a pinned as-of instant, `drift`, which runs
+//! one definition-versus-live-schema drift check over exported
+//! semantic layer snapshots, and `migrate`, which converts a
+//! memory-shaped tree into a bundle under a source profile and
+//! ships a loss ledger with it. Upkeep and drift are dry runs
+//! unless `--apply` is given, and every subcommand prints its
+//! report as JSON, or as Markdown with `--format md`. The
+//! auditors are the sanctioned stubs until the real trust auditor
+//! publishes its interfaces; every report names the auditor it
+//! ran against.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anchorwatch_core::auditor::StubAuditor;
 use anchorwatch_core::drift::{StubDriftAuditor, run_drift_check};
+use anchorwatch_core::migrate::{ClaudeMemoryProfile, Profile, run_migration};
 use anchorwatch_core::upkeep::{Mode, run_pass};
 
 fn main() -> ExitCode {
@@ -21,6 +25,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("upkeep") => run_upkeep(&args[1..]),
         Some("drift") => run_drift(&args[1..]),
+        Some("migrate") => run_migrate(&args[1..]),
         Some("--version") | Some("version") => {
             println!(
                 "anchorwatch {} (contract {})",
@@ -31,7 +36,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage: anchorwatch upkeep --bundle <path> --as-of <rfc3339> [--apply] [--format json|md]\n       anchorwatch drift --definitions <path> --live <path> --state <dir> --as-of <rfc3339> [--apply] [--format json|md]"
+                "usage: anchorwatch upkeep --bundle <path> --as-of <rfc3339> [--apply] [--format json|md]\n       anchorwatch drift --definitions <path> --live <path> --state <dir> --as-of <rfc3339> [--apply] [--format json|md]\n       anchorwatch migrate --profile <name> --source <dir> --out <dir> --as-of <rfc3339> [--format json|md]"
             );
             ExitCode::FAILURE
         }
@@ -143,6 +148,77 @@ fn run_drift(args: &[String]) -> ExitCode {
         }
         Err(error) => {
             eprintln!("drift check failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_migrate(args: &[String]) -> ExitCode {
+    let mut profile_name: Option<String> = None;
+    let mut source: Option<PathBuf> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut as_of: Option<String> = None;
+    let mut markdown = false;
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--profile" => {
+                i += 1;
+                profile_name = args.get(i).cloned();
+            }
+            "--source" => {
+                i += 1;
+                source = args.get(i).map(PathBuf::from);
+            }
+            "--out" => {
+                i += 1;
+                out = args.get(i).map(PathBuf::from);
+            }
+            "--as-of" => {
+                i += 1;
+                as_of = args.get(i).cloned();
+            }
+            "--format" => {
+                i += 1;
+                markdown = args.get(i).map(String::as_str) == Some("md");
+            }
+            other => {
+                eprintln!("unknown argument: {other}");
+                return ExitCode::FAILURE;
+            }
+        }
+        i += 1;
+    }
+    let (Some(profile_name), Some(source), Some(out), Some(as_of)) =
+        (profile_name, source, out, as_of)
+    else {
+        eprintln!(
+            "migrate needs --profile <name>, --source <dir>, --out <dir>, and --as-of <rfc3339>"
+        );
+        return ExitCode::FAILURE;
+    };
+    let profile: Box<dyn Profile> = match profile_name.as_str() {
+        "claude-memory" => Box::new(ClaudeMemoryProfile),
+        other => {
+            eprintln!("unknown profile: {other} (known: claude-memory)");
+            return ExitCode::FAILURE;
+        }
+    };
+    match run_migration(profile.as_ref(), &source, &out, &as_of) {
+        Ok(report) => {
+            if markdown {
+                print!("{}", report.to_markdown());
+            } else {
+                print!("{}", report.to_json());
+            }
+            if report.gate_failed {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(error) => {
+            eprintln!("migration failed: {error}");
             ExitCode::FAILURE
         }
     }
