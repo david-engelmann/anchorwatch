@@ -460,6 +460,49 @@ fn state_files_carry_paths_with_commas() {
 }
 
 #[test]
+fn a_review_date_that_does_not_exist_is_malformed_not_stale() {
+    // Register R1-03. Before the calendar check, the thirty first
+    // of February parsed as a March instant, so the freshness
+    // finding was an ordinary passed date. A date that does not
+    // exist is malformed, and the queue item must say so.
+    let dir = std::env::temp_dir().join(format!("anchorwatch-pass-feb31-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(
+        &dir,
+        "concepts/a.md",
+        "---\ntype: Note\ntitle: \"A\"\nstale_after: 2026-02-31\n---\nbody a\n",
+    );
+    write_file(
+        &dir,
+        "index.md",
+        "---\nokf_version: \"0.3\"\ntitle: \"Fixture bundle\"\n---\n\n# Fixture bundle\n\n# concepts\n\n* [A](concepts/a.md)\n",
+    );
+    write_file(&dir, "concepts/index.md", "# concepts\n\n* [A](a.md)\n");
+    write_file(&dir, "log.md", "# Bundle Update Log\n");
+    let report = run_pass(&dir, "2026-11-24T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let item = report
+        .queue
+        .iter()
+        .find(|item| item.concept == "concepts/a.md" && item.reason == STALE)
+        .expect("the impossible date raises a stale item");
+    assert!(
+        item.evidence
+            .iter()
+            .any(|(k, v)| k == "malformed" && v == "true"),
+        "evidence: {:?}",
+        item.evidence
+    );
+    assert!(
+        item.evidence
+            .iter()
+            .any(|(k, v)| k == "rule_id" && v == "AW-FRE-02"),
+        "evidence: {:?}",
+        item.evidence
+    );
+}
+
+#[test]
 fn a_second_pass_observes_a_tier_drop() {
     let dir = fixture("tierdrop");
     let first = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
