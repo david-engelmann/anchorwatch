@@ -1038,8 +1038,18 @@ fn apply_writes(
             ));
         }
     }
-    // Index regeneration for drifted indexes without prose.
-    for (index_rel, _, _, has_prose) in drift {
+    // Index regeneration for drifted indexes without prose. An
+    // index in a directory holding no concepts is reported but
+    // never regenerated: the engine has no model of what such an
+    // index lists, assets or anything else, and regenerating it
+    // would replace its contents with an empty concept listing.
+    for (index_rel, expected, _, has_prose) in drift {
+        if *expected == 0 {
+            actions.push(format!(
+                "index left untouched, its directory holds no concepts: {index_rel}"
+            ));
+            continue;
+        }
         if *has_prose {
             actions.push(format!(
                 "index left untouched, hand-written prose present: {index_rel}"

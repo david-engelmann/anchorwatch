@@ -541,6 +541,53 @@ fn a_review_date_that_does_not_exist_is_malformed_not_stale() {
 }
 
 #[test]
+fn an_index_over_no_concepts_is_reported_and_never_rewritten() {
+    // Register R1-05. A directory holding no concepts can still
+    // carry an index, over assets or anything else the engine has
+    // no model of. Its drift is reported, but apply mode must not
+    // regenerate it into an empty concept listing.
+    let dir = std::env::temp_dir().join(format!("anchorwatch-pass-assets-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(
+        &dir,
+        "concepts/a.md",
+        "---\ntype: Note\ntitle: \"A\"\nstale_after: 2027-01-01\n---\nbody a\n",
+    );
+    write_file(&dir, "assets/data.txt", "the asset bytes\n");
+    write_file(&dir, "assets/index.md", "# assets\n\n* [Data](data.txt)\n");
+    write_file(
+        &dir,
+        "index.md",
+        "---\nokf_version: \"0.3\"\ntitle: \"Fixture bundle\"\n---\n\n# Fixture bundle\n\n# concepts\n\n* [A](concepts/a.md)\n",
+    );
+    write_file(&dir, "concepts/index.md", "# concepts\n\n* [A](a.md)\n");
+    write_file(&dir, "log.md", "# Bundle Update Log\n");
+    let report = run_pass(&dir, "2026-11-24T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    let item = report
+        .queue
+        .iter()
+        .find(|item| item.concept == "assets/index.md" && item.reason == INDEX_DRIFT)
+        .expect("the asset index drift is reported");
+    assert!(
+        item.evidence
+            .iter()
+            .any(|(k, v)| k == "expected_links" && v == "0"),
+        "evidence: {:?}",
+        item.evidence
+    );
+    assert!(
+        report.actions.iter().any(|a| {
+            a == "index left untouched, its directory holds no concepts: assets/index.md"
+        }),
+        "actions: {:?}",
+        report.actions
+    );
+    let untouched = std::fs::read_to_string(dir.join("assets/index.md")).unwrap();
+    assert_eq!(untouched, "# assets\n\n* [Data](data.txt)\n");
+}
+
+#[test]
 fn a_second_pass_observes_a_tier_drop() {
     let dir = fixture("tierdrop");
     let first = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
