@@ -880,6 +880,29 @@ fn index_has_prose(text: &str) -> bool {
     false
 }
 
+/// A document's frontmatter block, both delimiters included,
+/// under either line ending, when the block opens and closes.
+/// The block is the bundle's own declared metadata, so it is
+/// carried byte for byte; a reader that only knew one ending
+/// would drop it from a bundle written with the other.
+fn frontmatter_block(text: &str) -> Option<&str> {
+    let mut pos = 0;
+    let mut opened = false;
+    for line in text.split_inclusive('\n') {
+        pos += line.len();
+        let bare = line.trim_end_matches(['\n', '\r']);
+        if !opened {
+            if bare != "---" {
+                return None;
+            }
+            opened = true;
+        } else if bare == "---" {
+            return Some(&text[..pos]);
+        }
+    }
+    None
+}
+
 /// Renders the generated form of one directory index from concept
 /// frontmatter, in the same shape the migrator writes. The bundle
 /// root's existing frontmatter is preserved exactly.
@@ -894,11 +917,9 @@ fn regenerate_index(bundle: &Bundle, dir: &str) -> String {
         let mut out = String::new();
         if let Some(existing) = bundle.file("index.md") {
             if let Ok(text) = std::fs::read_to_string(bundle.root.join("index.md"))
-                && let Some(body) = text.strip_prefix("---\n")
-                && let Some(end) = body.find("\n---")
+                && let Some(block) = frontmatter_block(&text)
             {
-                out.push_str(&text[..4 + end + 4]);
-                out.push('\n');
+                out.push_str(block);
             }
             let _ = existing;
         }
