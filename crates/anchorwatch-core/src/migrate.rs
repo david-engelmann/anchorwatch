@@ -117,6 +117,15 @@ pub struct ConvertedConcept {
     pub content: String,
 }
 
+/// One non-Markdown file carried across byte for byte.
+#[derive(Debug, Clone)]
+pub struct AssetFile {
+    /// Bundle-relative path of the asset.
+    pub relpath: String,
+    /// The file's bytes, unchanged.
+    pub bytes: Vec<u8>,
+}
+
 /// What a profile produces from one source tree: the construct
 /// classes it found, the concepts it converted, and the ledger
 /// entries it drafts.
@@ -128,6 +137,15 @@ pub struct ProfileOutcome {
     pub concepts: Vec<ConvertedConcept>,
     /// The ledger entries drafted, in ledger order.
     pub drafts: Vec<LedgerDraft>,
+    /// Non-Markdown files carried across unchanged.
+    pub assets: Vec<AssetFile>,
+    /// Dated log groups carried from the source bundle's log,
+    /// without its title line, oldest material last.
+    pub carried_log: Option<String>,
+    /// Bundle metadata fields carried from the source root
+    /// index (title, description, license), which the spec
+    /// requires a regenerating producer to keep.
+    pub root_fields: Vec<(String, String)>,
 }
 
 /// A source profile: the constructs of one tree shape, and how
@@ -344,14 +362,7 @@ pub fn run_migration(
         .any(|e| e.load_bearing && e.disposition == Disposition::Lost);
     let gate_failed = honesty_gate_failed || load_bearing_gate_failed;
 
-    write_bundle(
-        out,
-        profile.name(),
-        as_of,
-        &run_id,
-        &outcome.concepts,
-        &entries,
-    )?;
+    write_bundle(out, profile.name(), as_of, &run_id, &outcome, &entries)?;
 
     Ok(MigrateReport {
         run_id,
@@ -378,12 +389,22 @@ fn write_bundle(
     profile_name: &str,
     as_of: &str,
     run_id: &str,
-    concepts: &[ConvertedConcept],
+    outcome: &ProfileOutcome,
     entries: &[LedgerEntry],
 ) -> Result<(), String> {
+    let concepts = &outcome.concepts;
     // The bundle root itself: a tree that converts no concepts
     // still gets its indexes, log, and ledger written into it.
     std::fs::create_dir_all(out).map_err(|e| format!("cannot create {}: {e}", out.display()))?;
+    for asset in &outcome.assets {
+        let path = out.join(&asset.relpath);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&path, &asset.bytes)
+            .map_err(|e| format!("cannot write {}: {e}", asset.relpath))?;
+    }
     for concept in concepts {
         let path = out.join(&concept.relpath);
         if let Some(parent) = path.parent() {
@@ -420,10 +441,28 @@ fn write_bundle(
     // The root index carries the bundle frontmatter and lists
     // every concept by its full path, grouped by directory.
     let mut root_index = String::new();
-    root_index.push_str("---\nokf_version: \"0.3\"\ntitle: \"Migrated knowledge bundle\"\n");
-    root_index.push_str(&format!(
-        "description: \"OKF v0.3 bundle migrated by anchorwatch with the {profile_name} profile. See LOSS-LEDGER.md for what did not survive the mapping.\"\n---\n\n# Migrated knowledge bundle\n"
-    ));
+    root_index.push_str("---\nokf_version: \"0.3\"\n");
+    // Bundle metadata the source root index carried is kept, as
+    // the spec requires of a producer that regenerates index.md.
+    let carried_field = |key: &str| {
+        outcome
+            .root_fields
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+    };
+    let title = carried_field("title").unwrap_or_else(|| "Migrated knowledge bundle".to_string());
+    root_index.push_str(&format!("title: {}\n", quoted(&title)));
+    let description = carried_field("description").unwrap_or_else(|| {
+        format!(
+            "OKF v0.3 bundle migrated by anchorwatch with the {profile_name} profile. See LOSS-LEDGER.md for what did not survive the mapping."
+        )
+    });
+    root_index.push_str(&format!("description: {}\n", quoted(&description)));
+    if let Some(license) = carried_field("license") {
+        root_index.push_str(&format!("license: {}\n", quoted(&license)));
+    }
+    root_index.push_str("---\n\n# Migrated knowledge bundle\n");
     for (dir, members) in &dirs {
         if !dir.is_empty() {
             root_index.push_str(&format!("\n# {dir}\n"));
@@ -435,11 +474,20 @@ fn write_bundle(
     }
     std::fs::write(out.join("index.md"), root_index)
         .map_err(|e| format!("cannot write index.md: {e}"))?;
-    // The bundle log, one creation group at the as-of date.
-    let log = format!(
+    // The bundle log, one creation group at the as-of date, with
+    // any log history the profile carried under it.
+    let mut log = format!(
         "# Bundle Update Log\n\n## {}\n* **Creation**: Bundle created by the anchorwatch migrator with the {profile_name} profile. See LOSS-LEDGER.md for what did not survive the mapping.\n",
         &as_of[..10]
     );
+    if let Some(carried) = &outcome.carried_log {
+        let carried = carried.trim_end();
+        if !carried.is_empty() {
+            log.push('\n');
+            log.push_str(carried);
+            log.push('\n');
+        }
+    }
     std::fs::write(out.join("log.md"), log).map_err(|e| format!("cannot write log.md: {e}"))?;
     // The loss ledger, Markdown with a JSON twin.
     let mut ledger = String::new();
@@ -826,6 +874,9 @@ impl Profile for ClaudeMemoryProfile {
             classes,
             concepts,
             drafts,
+            assets: Vec::new(),
+            carried_log: None,
+            root_fields: Vec::new(),
         })
     }
 }
@@ -1010,6 +1061,539 @@ fn convert_whole(
         concept_type: concept_type.to_string(),
         title,
         content,
+    }
+}
+
+/// The OKF native profile: a source that is already an OKF
+/// bundle, at any declared version, re-emitted as a v0.3 bundle
+/// over the same engine. Concepts keep their paths, bodies, and
+/// frontmatter spans; the migration's real work is the version
+/// step. A bundle that declares 0.2 or earlier, or declares no
+/// version, wrote its bare path fields from the bundle root,
+/// while v0.3 resolves them from the file's own directory, so
+/// carrying such a value across unchanged would silently move
+/// its target. The profile rewrites bare in-bundle path values
+/// to the leading-slash form, which names the same target under
+/// both readings. A bundle that already declares 0.3 needs no
+/// rewrite and gets none.
+pub struct OkfNativeProfile;
+
+/// One top-level frontmatter key and its raw lines, continuations
+/// included, so an unmodified span re-emits byte for byte.
+struct FmSpan {
+    key: String,
+    lines: Vec<String>,
+}
+
+/// The frontmatter keys the v0.3 specification defines.
+const STANDARD_KEYS: &[&str] = &[
+    "type",
+    "title",
+    "description",
+    "resource",
+    "tags",
+    "sources",
+    "usage_window",
+    "generated",
+    "verified",
+    "status",
+    "superseded_by",
+    "stale_after",
+    "okf_version",
+    "license",
+];
+
+/// Splits a document into its frontmatter spans and its body.
+/// A document with no block, or a block that never closes, has
+/// no spans and its whole text is the body.
+fn split_spans(text: &str) -> (Vec<FmSpan>, &str) {
+    let Some(rest) = text.strip_prefix("---\n") else {
+        return (Vec::new(), text);
+    };
+    let mut pos = 0;
+    for line in rest.split_inclusive('\n') {
+        if line.trim_end_matches(['\n', '\r']) == "---" {
+            let block = &rest[..pos];
+            let body = &rest[pos + line.len()..];
+            return (parse_spans(block), body);
+        }
+        pos += line.len();
+    }
+    (Vec::new(), text)
+}
+
+fn parse_spans(block: &str) -> Vec<FmSpan> {
+    let mut raw: Vec<&str> = block.split('\n').collect();
+    if raw.last() == Some(&"") {
+        raw.pop();
+    }
+    let mut spans: Vec<FmSpan> = Vec::new();
+    for line in raw {
+        let is_key = !line.is_empty()
+            && !line.starts_with(char::is_whitespace)
+            && !line.starts_with('#')
+            && !line.starts_with("- ")
+            && line.split(':').next().is_some_and(|head| {
+                !head.is_empty()
+                    && head
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            })
+            && (line.ends_with(':') || line.contains(": "));
+        if is_key {
+            let key = line.split(':').next().unwrap_or("").to_string();
+            spans.push(FmSpan {
+                key,
+                lines: vec![line.to_string()],
+            });
+        } else if let Some(current) = spans.last_mut() {
+            current.lines.push(line.to_string());
+        } else {
+            spans.push(FmSpan {
+                key: String::new(),
+                lines: vec![line.to_string()],
+            });
+        }
+    }
+    spans
+}
+
+/// Strips one pair of surrounding quotes from a scalar value.
+fn unquote(value: &str) -> String {
+    let bytes = value.as_bytes();
+    if value.len() >= 2
+        && ((bytes[0] == b'"' && bytes[value.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\''))
+    {
+        value[1..value.len() - 1].to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+/// The scalar value a span's key line carries, if it carries one.
+fn span_scalar(span: &FmSpan) -> Option<String> {
+    let first = span.lines.first()?;
+    let (_, value) = first.split_once(':')?;
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(unquote(value))
+}
+
+/// Whether a value reads as a bare in-bundle path: relative,
+/// unspaced, schemeless, and carrying a directory component.
+fn is_bare_bundle_path(value: &str) -> bool {
+    !value.is_empty()
+        && !value.contains(' ')
+        && !value.contains("://")
+        && !value.starts_with('/')
+        && !value.starts_with('.')
+        && !value.starts_with('#')
+        && value.contains('/')
+}
+
+/// Rewrites a top-level path field line to the leading-slash
+/// form, preserving its quoting. None when the value is not a
+/// bare in-bundle path.
+fn rewrite_path_line(line: &str) -> Option<String> {
+    let (key, raw) = line.split_once(':')?;
+    let value = raw.trim();
+    let inner = unquote(value);
+    if !is_bare_bundle_path(&inner) {
+        return None;
+    }
+    if value.starts_with('"') || value.starts_with('\'') {
+        let quote = &value[..1];
+        Some(format!("{key}: {quote}/{inner}{quote}"))
+    } else {
+        Some(format!("{key}: /{inner}"))
+    }
+}
+
+/// Rewrites a resource line inside a sources entry the same
+/// way. None when the line is not a resource line or its value
+/// is not a bare in-bundle path.
+fn rewrite_resource_line(line: &str) -> Option<String> {
+    let colon = line.find("resource:")?;
+    let head = &line[..colon + "resource:".len()];
+    if !head.trim_start().starts_with("resource:") && !head.trim_start().starts_with("- resource:")
+    {
+        return None;
+    }
+    let rest = line[colon + "resource:".len()..].trim_start();
+    let token = rest.split_whitespace().next()?;
+    if !is_bare_bundle_path(&unquote(token)) {
+        return None;
+    }
+    let start = line[colon..].find(token)? + colon;
+    Some(format!("{}/{token}", &line[..start]))
+}
+
+/// What one native conversion measured, for the ledger counts.
+#[derive(Default)]
+struct NativeStats {
+    extension_keys: usize,
+    unknown_keys: usize,
+    verified: usize,
+    review_dates: usize,
+    paths_rewritten: usize,
+}
+
+/// Converts one native concept: frontmatter spans carried
+/// verbatim apart from the path rewrites the version step
+/// requires, the migrator's own provenance keys appended, and
+/// the body carried byte for byte.
+fn convert_native(
+    rel: &str,
+    spans: &[FmSpan],
+    body: &str,
+    rewrite_paths: bool,
+    as_of: &str,
+) -> (ConvertedConcept, NativeStats) {
+    let mut stats = NativeStats::default();
+    let mut concept_type = String::new();
+    let mut title = String::new();
+    let mut content = String::from("---\n");
+    for span in spans {
+        if span.key == "type" {
+            concept_type = span_scalar(span).unwrap_or_default();
+        } else if span.key == "title" {
+            title = span_scalar(span).unwrap_or_default();
+        }
+        if span.key.starts_with("x-") {
+            stats.extension_keys += 1;
+        } else if !span.key.is_empty() && !STANDARD_KEYS.contains(&span.key.as_str()) {
+            stats.unknown_keys += 1;
+        }
+        if span.key == "verified" {
+            stats.verified += 1;
+        }
+        if span.key == "stale_after" && span_scalar(span).is_some() {
+            stats.review_dates += 1;
+        }
+        for (index, line) in span.lines.iter().enumerate() {
+            let rewritten = if !rewrite_paths {
+                None
+            } else if index == 0 && (span.key == "superseded_by" || span.key == "resource") {
+                rewrite_path_line(line)
+            } else if span.key == "sources" && index > 0 {
+                rewrite_resource_line(line)
+            } else {
+                None
+            };
+            match rewritten {
+                Some(line) => {
+                    stats.paths_rewritten += 1;
+                    content.push_str(&line);
+                }
+                None => content.push_str(line),
+            }
+            content.push('\n');
+        }
+    }
+    content.push_str(&format!("x-anchorwatch-source: {}\n", quoted(rel)));
+    content.push_str(&format!("x-anchorwatch-migrated-at: {}\n", quoted(as_of)));
+    content.push_str("---\n");
+    content.push_str(body);
+    if title.is_empty() {
+        title = rel
+            .rsplit('/')
+            .next()
+            .unwrap_or(rel)
+            .trim_end_matches(".md")
+            .to_string();
+    }
+    (
+        ConvertedConcept {
+            relpath: rel.to_string(),
+            concept_type,
+            title,
+            content,
+        },
+        stats,
+    )
+}
+
+impl Profile for OkfNativeProfile {
+    fn name(&self) -> &str {
+        "okf-native"
+    }
+
+    fn convert_tree(&self, source: &Path, as_of: &str) -> Result<ProfileOutcome, String> {
+        let mut files = Vec::new();
+        collect_files(source, source, &mut files);
+        files.sort();
+
+        // The declared version and the bundle metadata come from
+        // the source root index, read before anything converts,
+        // because the version decides the path rewrite.
+        let mut rewrite_paths = true;
+        let mut root_fields: Vec<(String, String)> = Vec::new();
+        if files.iter().any(|rel| rel == "index.md") {
+            let text = std::fs::read_to_string(source.join("index.md"))
+                .map_err(|e| format!("cannot read index.md: {e}"))?;
+            let (spans, _) = split_spans(&text);
+            for span in &spans {
+                if span.key == "okf_version"
+                    && let Some(version) = span_scalar(span)
+                {
+                    rewrite_paths = version == "0.1" || version == "0.2";
+                }
+                if ["title", "description", "license"].contains(&span.key.as_str())
+                    && let Some(value) = span_scalar(span)
+                    && !value.is_empty()
+                {
+                    root_fields.push((span.key.clone(), value));
+                }
+            }
+        }
+
+        let mut concepts: Vec<ConvertedConcept> = Vec::new();
+        let mut assets: Vec<AssetFile> = Vec::new();
+        let mut carried_log: Option<String> = None;
+        let mut stats = NativeStats::default();
+        let mut typeless = 0usize;
+        let mut indexes = 0usize;
+        let mut index_prose = 0usize;
+        let mut log_groups = 0usize;
+        for rel in &files {
+            // Dot paths are not part of the bundle.
+            if rel.split('/').any(|segment| segment.starts_with('.')) {
+                continue;
+            }
+            let path = source.join(rel);
+            let base = rel.rsplit('/').next().unwrap_or(rel);
+            if base == "index.md" {
+                indexes += 1;
+                let text = std::fs::read_to_string(&path)
+                    .map_err(|e| format!("cannot read {rel}: {e}"))?;
+                let (_, body) = split_spans(&text);
+                let has_prose = body.lines().any(|line| {
+                    let line = line.trim();
+                    !line.is_empty()
+                        && !line.starts_with('#')
+                        && !line.starts_with("* [")
+                        && !line.starts_with("- [")
+                });
+                if has_prose {
+                    index_prose += 1;
+                }
+                continue;
+            }
+            if rel == "log.md" {
+                let text = std::fs::read_to_string(&path)
+                    .map_err(|e| format!("cannot read {rel}: {e}"))?;
+                log_groups = text.lines().filter(|line| line.starts_with("## ")).count();
+                let carried = text
+                    .lines()
+                    .skip_while(|line| !line.starts_with("## "))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !carried.is_empty() {
+                    carried_log = Some(carried);
+                }
+                continue;
+            }
+            if !base.ends_with(".md") {
+                let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {rel}: {e}"))?;
+                assets.push(AssetFile {
+                    relpath: rel.clone(),
+                    bytes,
+                });
+                continue;
+            }
+            let text =
+                std::fs::read_to_string(&path).map_err(|e| format!("cannot read {rel}: {e}"))?;
+            let (spans, body) = split_spans(&text);
+            let has_type = spans
+                .iter()
+                .find(|span| span.key == "type")
+                .and_then(span_scalar)
+                .is_some_and(|value| !value.is_empty());
+            if !has_type {
+                typeless += 1;
+                continue;
+            }
+            let (concept, one) = convert_native(rel, &spans, body, rewrite_paths, as_of);
+            stats.extension_keys += one.extension_keys;
+            stats.unknown_keys += one.unknown_keys;
+            stats.verified += one.verified;
+            stats.review_dates += one.review_dates;
+            stats.paths_rewritten += one.paths_rewritten;
+            concepts.push(concept);
+        }
+        concepts.sort_by(|a, b| a.relpath.cmp(&b.relpath));
+        assets.sort_by(|a, b| a.relpath.cmp(&b.relpath));
+
+        let mut classes = Vec::new();
+        let mut drafts = Vec::new();
+        let mut pair = |count: usize, draft: LedgerDraft| {
+            if count > 0 {
+                classes.push(ConstructClass {
+                    name: draft.construct.clone(),
+                    count,
+                });
+                drafts.push(draft);
+            }
+        };
+        pair(
+            concepts.len(),
+            LedgerDraft {
+                construct: "OKF concepts".to_string(),
+                count: concepts.len(),
+                disposition: Disposition::Mapped,
+                target: "OKF v0.3 concepts at the same paths".to_string(),
+                reason: "paths, bodies, and frontmatter carry across, with the standard fields keeping their v0.3 homes by construction.".to_string(),
+                load_bearing: false,
+                recovery: "none needed".to_string(),
+            },
+        );
+        pair(
+            stats.paths_rewritten,
+            LedgerDraft {
+                construct: "root-relative path fields".to_string(),
+                count: stats.paths_rewritten,
+                disposition: Disposition::Mapped,
+                target: "leading-slash path values naming the same targets".to_string(),
+                reason: "a bundle at 0.2 or earlier, or with no declared version, wrote bare path values from the bundle root, while v0.3 resolves them from the file's own directory, so the values are rewritten to the leading-slash form that names the same target under both readings.".to_string(),
+                load_bearing: false,
+                recovery: "none needed".to_string(),
+            },
+        );
+        pair(
+            stats.extension_keys,
+            LedgerDraft {
+                construct: "extension keys".to_string(),
+                count: stats.extension_keys,
+                disposition: Disposition::PreservedAsExtension,
+                target: "the same x- keys on the converted concepts".to_string(),
+                reason:
+                    "extension keys are the spec's own producer space and carry across unchanged."
+                        .to_string(),
+                load_bearing: false,
+                recovery: "none needed".to_string(),
+            },
+        );
+        pair(
+            stats.unknown_keys,
+            LedgerDraft {
+                construct: "unrecognised frontmatter keys".to_string(),
+                count: stats.unknown_keys,
+                disposition: Disposition::PreservedAsExtension,
+                target: "the same keys on the converted concepts".to_string(),
+                reason: "the spec requires a producer that modifies a file to keep the keys it does not know, so unknown keys ride across verbatim rather than being renamed or dropped.".to_string(),
+                load_bearing: false,
+                recovery: "none needed".to_string(),
+            },
+        );
+        pair(
+            stats.verified,
+            LedgerDraft {
+                construct: "verification events".to_string(),
+                count: stats.verified,
+                disposition: Disposition::Mapped,
+                target: "the verified lists on the converted concepts".to_string(),
+                reason: "verification events carry across unchanged, so trust tiers computed from them are the same before and after the migration.".to_string(),
+                load_bearing: false,
+                recovery: "none needed".to_string(),
+            },
+        );
+        pair(
+            stats.review_dates,
+            LedgerDraft {
+                construct: "review dates".to_string(),
+                count: stats.review_dates,
+                disposition: Disposition::Mapped,
+                target: "the stale_after values on the converted concepts".to_string(),
+                reason: "a native bundle records its own review dates, and they carry across unchanged, where a memory-shaped tree has none to carry.".to_string(),
+                load_bearing: false,
+                recovery: "none needed".to_string(),
+            },
+        );
+        pair(
+            typeless,
+            LedgerDraft {
+                construct: "Markdown files without a type".to_string(),
+                count: typeless,
+                disposition: Disposition::Excluded,
+                target: "not carried".to_string(),
+                reason: "the spec's own rule is that a Markdown file without a type is not a concept, so the migration carries concepts and leaves these files behind, named here rather than dropped silently.".to_string(),
+                load_bearing: false,
+                recovery: "give the file a type and re-run the migration".to_string(),
+            },
+        );
+        pair(
+            indexes,
+            LedgerDraft {
+                construct: "source index files".to_string(),
+                count: indexes,
+                disposition: Disposition::Approximated,
+                target: "regenerated directory indexes".to_string(),
+                reason: "indexes are furniture and are regenerated from the converted concepts, so their link sets are exact by construction.".to_string(),
+                load_bearing: false,
+                recovery: "none needed".to_string(),
+            },
+        );
+        pair(
+            index_prose,
+            LedgerDraft {
+                construct: "index prose".to_string(),
+                count: index_prose,
+                disposition: Disposition::Lost,
+                target: "no target".to_string(),
+                reason: "prose written into a source index has no home in a regenerated index, whose whole content is its link set.".to_string(),
+                load_bearing: false,
+                recovery: "move the prose into a concept and re-run the migration".to_string(),
+            },
+        );
+        pair(
+            log_groups,
+            LedgerDraft {
+                construct: "bundle log history".to_string(),
+                count: log_groups,
+                disposition: Disposition::Approximated,
+                target: "dated groups carried under the migration's own creation group".to_string(),
+                reason: "the source log's dated groups carry across under the new log's head, with the source log's own title line dropped.".to_string(),
+                load_bearing: false,
+                recovery: "none needed".to_string(),
+            },
+        );
+        pair(
+            assets.len(),
+            LedgerDraft {
+                construct: "asset files".to_string(),
+                count: assets.len(),
+                disposition: Disposition::Mapped,
+                target: "the same files at the same paths".to_string(),
+                reason: "non-Markdown files are bundle assets and copy across byte for byte."
+                    .to_string(),
+                load_bearing: false,
+                recovery: "none needed".to_string(),
+            },
+        );
+        pair(
+            root_fields.len(),
+            LedgerDraft {
+                construct: "bundle metadata".to_string(),
+                count: root_fields.len(),
+                disposition: Disposition::Mapped,
+                target: "the regenerated root index frontmatter".to_string(),
+                reason: "the spec requires a producer that regenerates the root index to keep its title, description, and license, so those fields carry into the new frontmatter beside the 0.3 version stamp.".to_string(),
+                load_bearing: false,
+                recovery: "none needed".to_string(),
+            },
+        );
+
+        Ok(ProfileOutcome {
+            classes,
+            concepts,
+            drafts,
+            assets,
+            carried_log,
+            root_fields,
+        })
     }
 }
 
