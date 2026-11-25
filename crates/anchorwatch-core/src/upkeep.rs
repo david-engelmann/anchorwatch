@@ -6,8 +6,9 @@
 //! Nothing in a pass contacts the network or calls a language model.
 //!
 //! The steps run in the contract's order: snapshot, audit intake,
-//! lapse recompute, supersession audit, index regeneration, log
-//! entry, queue maintenance, report. The engine's never list binds
+//! lapse recompute, supersession audit, claim registry check,
+//! index regeneration, log entry, queue maintenance, report. The
+//! engine's never list binds
 //! every step: it never edits a concept body, never stamps a
 //! verification event, never sets or removes a review date, never
 //! chooses a supersession target, and never deletes a file. The one
@@ -21,10 +22,10 @@ use std::path::Path;
 use crate::CONTRACT_VERSION;
 use crate::auditor::{Auditor, AuditorReport, Finding, Tier};
 use crate::bundle::{Bundle, StateManifest};
-use crate::json::Json;
+use crate::json::{Json, Parsed, parse};
 use crate::queue::{
-    INDEX_DRIFT, LAPSED_VERIFICATION, NO_REVIEW_DATE, PROVENANCE_GAP, QueueItem, QueueState, STALE,
-    SUPERSESSION_DEFECT, TIER_DROP, TYPE_MISSING, sort_queue,
+    INDEX_DRIFT, LAPSED_VERIFICATION, NO_REVIEW_DATE, PROVENANCE_GAP, QueueItem, QueueState,
+    REGISTRY_DRIFT, STALE, SUPERSESSION_DEFECT, TIER_DROP, TYPE_MISSING, sort_queue,
 };
 use crate::sha256::sha256_hex;
 use crate::time::parse_timestamp;
@@ -385,6 +386,72 @@ pub fn run_pass(
         }
     }
 
+    // The claim registry check, for bundles that carry a generated
+    // registry. The registry is discovered by its shape, never by
+    // its address, and checked against the bundle as it now stands.
+    // A bundle without one is simply not checked, and a bundle with
+    // more than one candidate is reported rather than guessed.
+    match find_claim_registry(root) {
+        RegistrySearch::Found { relpath, claims } => {
+            notes.push(format!(
+                "claim registry checked: {relpath} ({} claims)",
+                claims.len()
+            ));
+            let ids: BTreeSet<&str> = claims.iter().map(|c| c.id.as_str()).collect();
+            // One item per claim id, however many kinds of drift it
+            // carries, so the queue merge sees a single key.
+            let mut problems: BTreeMap<String, (Vec<(String, String)>, bool)> = BTreeMap::new();
+            let mut seen: BTreeSet<&str> = BTreeSet::new();
+            for claim in &claims {
+                if !seen.insert(claim.id.as_str()) {
+                    let entry = problems
+                        .entry(claim.id.clone())
+                        .or_insert_with(|| (Vec::new(), false));
+                    entry
+                        .0
+                        .push(("kind".to_string(), "duplicate_id".to_string()));
+                }
+                if bundle.file(&claim.concept).is_none() {
+                    let entry = problems
+                        .entry(claim.id.clone())
+                        .or_insert_with(|| (Vec::new(), false));
+                    entry
+                        .0
+                        .push(("kind".to_string(), "dangling_concept".to_string()));
+                    entry.0.push(("concept".to_string(), claim.concept.clone()));
+                    entry.1 = true;
+                }
+                for target in &claim.supersedes {
+                    if !ids.contains(target.as_str()) {
+                        let entry = problems
+                            .entry(claim.id.clone())
+                            .or_insert_with(|| (Vec::new(), false));
+                        entry
+                            .0
+                            .push(("kind".to_string(), "dangling_edge".to_string()));
+                        entry.0.push(("supersedes".to_string(), target.clone()));
+                    }
+                }
+            }
+            for (id, (mut evidence, defect)) in problems {
+                let mut full = vec![("registry".to_string(), relpath.clone())];
+                full.append(&mut evidence);
+                let mut item = QueueItem::new(id, REGISTRY_DRIFT, full, &run_id);
+                if defect {
+                    item.priority = 1;
+                }
+                items.push(item);
+            }
+        }
+        RegistrySearch::Ambiguous(candidates) => {
+            notes.push(format!(
+                "multiple claim registry candidates found, none checked: {}",
+                candidates.join(", ")
+            ));
+        }
+        RegistrySearch::Absent => {}
+    }
+
     // Step 5, index drift. Regeneration content is computed for
     // every index; a directory whose index carries hand-written
     // prose is flagged and never rewritten by the pass.
@@ -522,6 +589,119 @@ fn extract_string_map(text: &str, wanted: &str) -> BTreeMap<String, String> {
         }
     }
     out
+}
+
+/// One entry of a generated claim registry, reduced to the fields
+/// the drift check reads.
+struct ClaimEntry {
+    id: String,
+    concept: String,
+    supersedes: Vec<String>,
+}
+
+/// The outcome of looking for a bundle's claim registry.
+enum RegistrySearch {
+    Absent,
+    Found {
+        relpath: String,
+        claims: Vec<ClaimEntry>,
+    },
+    Ambiguous(Vec<String>),
+}
+
+/// Finds a bundle's generated claim registry by its shape. A
+/// registry is a JSON document whose top level carries a `claims`
+/// array of entries naming an `id` and a `concept`, with an
+/// optional `supersedes` array of claim ids. The file's address is
+/// never assumed, because the registry is another product's
+/// artefact and this engine does not set its conventions. A file
+/// that does not parse, or parses to any other shape, is not a
+/// candidate. This shape is the proposed contract of design record
+/// section 30, held open for reconciliation with the product seat.
+fn find_claim_registry(root: &Path) -> RegistrySearch {
+    let mut json_files = Vec::new();
+    collect_json_files(root, root, &mut json_files);
+    json_files.sort();
+    let mut found = Vec::new();
+    for relpath in json_files {
+        let Ok(text) = std::fs::read_to_string(root.join(&relpath)) else {
+            continue;
+        };
+        let Some(Parsed::Obj(top)) = parse(&text) else {
+            continue;
+        };
+        let Some(Parsed::Arr(entries)) = top.get("claims") else {
+            continue;
+        };
+        let mut claims = Vec::new();
+        let mut shape_holds = true;
+        for entry in entries {
+            let Parsed::Obj(fields) = entry else {
+                shape_holds = false;
+                break;
+            };
+            let (Some(Parsed::Str(id)), Some(Parsed::Str(concept))) =
+                (fields.get("id"), fields.get("concept"))
+            else {
+                shape_holds = false;
+                break;
+            };
+            let mut supersedes = Vec::new();
+            if let Some(Parsed::Arr(targets)) = fields.get("supersedes") {
+                for target in targets {
+                    let Parsed::Str(target) = target else {
+                        shape_holds = false;
+                        break;
+                    };
+                    supersedes.push(target.clone());
+                }
+                if !shape_holds {
+                    break;
+                }
+            }
+            claims.push(ClaimEntry {
+                id: id.clone(),
+                concept: concept.clone(),
+                supersedes,
+            });
+        }
+        if shape_holds {
+            found.push((relpath, claims));
+        }
+    }
+    match found.len() {
+        0 => RegistrySearch::Absent,
+        1 => {
+            let (relpath, claims) = found.pop().unwrap();
+            RegistrySearch::Found { relpath, claims }
+        }
+        _ => RegistrySearch::Ambiguous(found.into_iter().map(|(relpath, _)| relpath).collect()),
+    }
+}
+
+/// Collects the bundle's JSON files as relative paths, including
+/// the dot directories where generated artefacts live.
+fn collect_json_files(root: &Path, dir: &Path, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
+            collect_json_files(root, &path, out);
+        } else if kind.is_file()
+            && path.extension().is_some_and(|ext| ext == "json")
+            && let Ok(rel) = path.strip_prefix(root)
+        {
+            out.push(rel.to_string_lossy().replace('\\', "/"));
+        }
+    }
 }
 
 /// Loads the queue as the previous pass left it. Only the fields the

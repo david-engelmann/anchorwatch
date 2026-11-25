@@ -33,6 +33,14 @@ pub const INDEX_DRIFT: &str = "INDEX DRIFT";
 /// design record; it changes by amendment, never silently.
 pub const DEFINITION_DRIFT: &str = "DEFINITION DRIFT";
 
+/// A generated claim registry has drifted from the bundle it
+/// indexes: an entry names a concept the bundle no longer carries,
+/// an entry's supersession edge names a claim the registry does
+/// not hold, or a claim id appears twice. The registry is the
+/// product seat's artefact; the engine checks it as found and
+/// does not adopt its convention as a general format rule.
+pub const REGISTRY_DRIFT: &str = "REGISTRY DRIFT";
+
 /// The state of one queue item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueState {
