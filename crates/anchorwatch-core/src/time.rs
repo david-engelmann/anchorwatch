@@ -32,6 +32,12 @@ pub fn parse_timestamp(value: &str) -> Option<i64> {
         let (oh, om) = off.split_once(':')?;
         let oh: i64 = oh.parse().ok()?;
         let om: i64 = om.parse().ok()?;
+        // The offset is bounded like the clock it qualifies, so
+        // an offset of ninety nine hours reads as malformed
+        // rather than as an instant a week away.
+        if !(0..24).contains(&oh) || !(0..60).contains(&om) {
+            return None;
+        }
         (&rest[..idx], sign * (oh * 3600 + om * 60))
     } else {
         return None;
@@ -115,6 +121,18 @@ mod tests {
         assert_eq!(parse_timestamp("2026-13-01"), None);
         assert_eq!(parse_timestamp("2026-11-21 10:00:00"), None);
         assert_eq!(parse_timestamp(""), None);
+    }
+
+    #[test]
+    fn offsets_out_of_range_do_not_parse() {
+        assert_eq!(parse_timestamp("2026-11-21T12:00:00+24:00"), None);
+        assert_eq!(parse_timestamp("2026-11-21T12:00:00+99:99"), None);
+        assert_eq!(parse_timestamp("2026-11-21T12:00:00-10:60"), None);
+        assert!(parse_timestamp("2026-11-21T12:00:00+23:59").is_some());
+        assert_eq!(
+            parse_timestamp("2026-11-21T12:00:00-05:30"),
+            parse_timestamp("2026-11-21T17:30:00Z")
+        );
     }
 
     #[test]
