@@ -880,9 +880,37 @@ fn regenerate_index(bundle: &Bundle, dir: &str) -> String {
     out
 }
 
+/// Inserts a restored `type` line at the head of a document's
+/// frontmatter block. Returns None when the document has no
+/// frontmatter block, when the block never closes, or when a type
+/// key is already present, so the repair never guesses.
+fn restore_type_line(text: &str, recorded: &str) -> Option<String> {
+    let mut lines = text.lines();
+    if lines.next()?.trim_end() != "---" {
+        return None;
+    }
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed == "---" {
+            let insert_at = text.find('\n')? + 1;
+            let mut out = String::with_capacity(text.len() + recorded.len() + 8);
+            out.push_str(&text[..insert_at]);
+            out.push_str("type: ");
+            out.push_str(recorded);
+            out.push('\n');
+            out.push_str(&text[insert_at..]);
+            return Some(out);
+        }
+        if trimmed.starts_with("type:") || trimmed.starts_with("type :") {
+            return None;
+        }
+    }
+    None
+}
+
 /// Apply-mode writes: queue files, pass state, prose-free index
-/// regeneration, and the log entry. Nothing outside the bundle root
-/// is written.
+/// regeneration, the logged type restoration, and the log entry.
+/// Nothing outside the bundle root is written.
 #[allow(clippy::too_many_arguments)]
 fn apply_writes(
     root: &Path,
@@ -894,6 +922,44 @@ fn apply_writes(
     drift: &[Drift],
     actions: &mut Vec<String>,
 ) -> Result<(), String> {
+    // The one autonomous frontmatter repair: restoring a stripped
+    // type key from the migrator's manifest, for an open item whose
+    // file still carries its frontmatter block. A file that lost
+    // the whole block, and any item a human has claimed or waived,
+    // is left for a human. Every repair is logged in the actions,
+    // and the item itself closes on the next pass, which observes
+    // the restored key as evidence.
+    for item in queue {
+        if item.reason != TYPE_MISSING || item.state != QueueState::Open {
+            continue;
+        }
+        let Some(recorded) = item
+            .evidence
+            .iter()
+            .find(|(key, _)| key == "recorded_type")
+            .map(|(_, value)| value.clone())
+        else {
+            continue;
+        };
+        let Some(file) = bundle.file(&item.concept) else {
+            continue;
+        };
+        if !file.has_frontmatter {
+            continue;
+        }
+        let path = root.join(&item.concept);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Some(repaired) = restore_type_line(&text, &recorded) {
+            std::fs::write(&path, repaired)
+                .map_err(|e| format!("cannot write {}: {e}", item.concept))?;
+            actions.push(format!(
+                "type restored from the manifest: {} ({recorded})",
+                item.concept
+            ));
+        }
+    }
     // Index regeneration for drifted indexes without prose.
     for (index_rel, _, _, has_prose) in drift {
         if *has_prose {
