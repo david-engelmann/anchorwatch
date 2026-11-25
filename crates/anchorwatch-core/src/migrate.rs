@@ -534,10 +534,10 @@ fn collect_files(root: &Path, dir: &Path, out: &mut Vec<String>) {
         }
         if kind.is_dir() {
             collect_files(root, &path, out);
-        } else if kind.is_file() {
-            if let Ok(rel) = path.strip_prefix(root) {
-                out.push(rel.to_string_lossy().replace('\\', "/"));
-            }
+        } else if kind.is_file()
+            && let Ok(rel) = path.strip_prefix(root)
+        {
+            out.push(rel.to_string_lossy().replace('\\', "/"));
         }
     }
 }
@@ -583,25 +583,6 @@ fn modified_at(path: &Path) -> String {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
     format_timestamp(secs)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn timestamps_round_trip_through_the_parser() {
-        for stamp in [
-            "1970-01-01T00:00:00Z",
-            "2026-11-20T21:45:00Z",
-            "2024-02-29T12:00:00Z",
-            "2000-01-01T00:00:00Z",
-            "2038-01-19T03:14:07Z",
-        ] {
-            let epoch = parse_timestamp(stamp).unwrap();
-            assert_eq!(format_timestamp(epoch), stamp);
-        }
-    }
 }
 
 /// The Muse memory profile: the tree shape the runtime memory
@@ -942,10 +923,10 @@ fn convert_person(
     content.push_str("---\n");
     content.push_str(&format!("type: {}\n", quoted(concept_type)));
     content.push_str(&format!("title: {}\n", quoted(&title)));
-    if let Some(summary) = field(&fields, "summary") {
-        if !summary.is_empty() {
-            content.push_str(&format!("description: {}\n", quoted(summary)));
-        }
+    if let Some(summary) = field(&fields, "summary")
+        && !summary.is_empty()
+    {
+        content.push_str(&format!("description: {}\n", quoted(summary)));
     }
     content.push_str(&format!(
         "generated: {{ by: \"anchorwatch\", at: {} }}\n",
@@ -958,14 +939,14 @@ fn convert_person(
         ("last_name", "x-muse-last-name"),
         ("updated", "x-muse-updated"),
     ] {
-        if let Some(value) = field(&fields, key) {
-            if !value.is_empty() {
-                preserved += 1;
-                if key == "rank" {
-                    content.push_str(&format!("{xkey}: {value}\n"));
-                } else {
-                    content.push_str(&format!("{xkey}: {}\n", quoted(value)));
-                }
+        if let Some(value) = field(&fields, key)
+            && !value.is_empty()
+        {
+            preserved += 1;
+            if key == "rank" {
+                content.push_str(&format!("{xkey}: {value}\n"));
+            } else {
+                content.push_str(&format!("{xkey}: {}\n", quoted(value)));
             }
         }
     }
@@ -1026,5 +1007,24 @@ fn convert_whole(
         concept_type: concept_type.to_string(),
         title,
         content,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timestamps_round_trip_through_the_parser() {
+        for stamp in [
+            "1970-01-01T00:00:00Z",
+            "2026-11-20T21:45:00Z",
+            "2024-02-29T12:00:00Z",
+            "2000-01-01T00:00:00Z",
+            "2038-01-19T03:14:07Z",
+        ] {
+            let epoch = parse_timestamp(stamp).unwrap();
+            assert_eq!(format_timestamp(epoch), stamp);
+        }
     }
 }
