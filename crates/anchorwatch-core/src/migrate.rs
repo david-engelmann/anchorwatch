@@ -466,7 +466,11 @@ fn write_bundle(
         if dir.is_empty() {
             continue;
         }
-        let mut index = String::from("# Index\n");
+        // The heading names the directory, the same form the
+        // upkeep pass regenerates toward, so a migrated index
+        // keeps its heading when a later regeneration touches
+        // it instead of changing it for no chosen reason.
+        let mut index = format!("# {dir}\n");
         for concept in members {
             let name = concept
                 .relpath
