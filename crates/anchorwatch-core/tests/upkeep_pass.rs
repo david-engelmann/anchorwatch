@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 use anchorwatch_core::auditor::StubAuditor;
 use anchorwatch_core::queue::{
-    INDEX_DRIFT, NO_REVIEW_DATE, PROVENANCE_GAP, STALE, SUPERSESSION_DEFECT, TYPE_MISSING,
+    INDEX_DRIFT, NO_REVIEW_DATE, PROVENANCE_GAP, REGISTRY_DRIFT, STALE, SUPERSESSION_DEFECT,
+    TYPE_MISSING,
 };
 use anchorwatch_core::upkeep::{Mode, run_pass};
 
@@ -88,6 +89,14 @@ fn the_fixture_raises_the_expected_queue() {
     assert!(reasons_for(&report, "concepts/broken.md").contains(&SUPERSESSION_DEFECT.to_string()));
     assert!(reasons_for(&report, "concepts/stripped.md").contains(&TYPE_MISSING.to_string()));
     assert!(reasons_for(&report, "concepts/c.md").contains(&PROVENANCE_GAP.to_string()));
+    // The fixture carries no claim registry, so the registry check
+    // stays silent.
+    assert!(
+        !report
+            .queue
+            .iter()
+            .any(|item| item.reason == REGISTRY_DRIFT)
+    );
     // The indexes list every concept they should, so no drift.
     assert!(
         !report.queue.iter().any(|item| item.reason == INDEX_DRIFT),
@@ -235,6 +244,83 @@ fn a_legacy_queue_migrates_to_the_dot_directory() {
     // The migrated file itself carries the preserved first run.
     let written = std::fs::read_to_string(dir.join(".recension").join("queue.json")).unwrap();
     assert!(written.contains("run-legacy00000"));
+}
+
+#[test]
+fn a_claim_registry_is_checked_against_the_bundle() {
+    let dir = fixture("registry");
+    // Discovered by shape at an unremarkable address, never by name.
+    write_file(
+        &dir,
+        "claims.json",
+        "{\"claims\": [{\"id\": \"claim-1\", \"concept\": \"concepts/a.md\"}, {\"id\": \"claim-2\", \"concept\": \"concepts/gone.md\"}, {\"id\": \"claim-3\", \"concept\": \"concepts/b.md\", \"supersedes\": [\"claim-1\", \"claim-9\"]}, {\"id\": \"claim-3\", \"concept\": \"concepts/b.md\"}]}",
+    );
+    let report = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|n| n == "claim registry checked: claims.json (4 claims)"),
+        "notes: {:?}",
+        report.notes
+    );
+    let drift: Vec<&anchorwatch_core::queue::QueueItem> = report
+        .queue
+        .iter()
+        .filter(|item| item.reason == REGISTRY_DRIFT)
+        .collect();
+    assert_eq!(drift.len(), 2, "drift items: {drift:?}");
+    let dangling = drift.iter().find(|item| item.concept == "claim-2").unwrap();
+    assert_eq!(dangling.priority, 1);
+    assert!(
+        dangling
+            .evidence
+            .contains(&("kind".to_string(), "dangling_concept".to_string()))
+    );
+    assert!(
+        dangling
+            .evidence
+            .contains(&("concept".to_string(), "concepts/gone.md".to_string()))
+    );
+    let tangled = drift.iter().find(|item| item.concept == "claim-3").unwrap();
+    assert!(
+        tangled
+            .evidence
+            .contains(&("kind".to_string(), "dangling_edge".to_string()))
+    );
+    assert!(
+        tangled
+            .evidence
+            .contains(&("kind".to_string(), "duplicate_id".to_string()))
+    );
+    assert!(
+        tangled
+            .evidence
+            .contains(&("supersedes".to_string(), "claim-9".to_string()))
+    );
+}
+
+#[test]
+fn two_claim_registries_are_reported_not_guessed() {
+    let dir = fixture("registry-ambiguous");
+    let registry = "{\"claims\": [{\"id\": \"claim-1\", \"concept\": \"concepts/a.md\"}]}";
+    write_file(&dir, "claims.json", registry);
+    write_file(&dir, ".recension/claims-copy.json", registry);
+    let report = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|n| n.starts_with("multiple claim registry candidates found, none checked")),
+        "notes: {:?}",
+        report.notes
+    );
+    assert!(
+        !report
+            .queue
+            .iter()
+            .any(|item| item.reason == REGISTRY_DRIFT)
+    );
 }
 
 #[test]
