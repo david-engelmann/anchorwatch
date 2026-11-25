@@ -1370,7 +1370,14 @@ const STANDARD_KEYS: &[&str] = &[
 /// A document with no block, or a block that never closes, has
 /// no spans and its whole text is the body.
 fn split_spans(text: &str) -> (Vec<FmSpan>, &str) {
-    let Some(rest) = text.strip_prefix("---\n") else {
+    // Either line ending opens the block. A document written
+    // with carriage returns is the same document, and reading
+    // its frontmatter as absent would exclude every concept in
+    // it as typeless.
+    let rest = text
+        .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"));
+    let Some(rest) = rest else {
         return (Vec::new(), text);
     };
     let mut pos = 0;
@@ -1386,7 +1393,13 @@ fn split_spans(text: &str) -> (Vec<FmSpan>, &str) {
 }
 
 fn parse_spans(block: &str) -> Vec<FmSpan> {
-    let mut raw: Vec<&str> = block.split('\n').collect();
+    // Lines carry no carriage return into the spans: the scalar
+    // reads and the re-emission both work on the line's content,
+    // and the emitter terminates lines itself.
+    let mut raw: Vec<&str> = block
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .collect();
     if raw.last() == Some(&"") {
         raw.pop();
     }
