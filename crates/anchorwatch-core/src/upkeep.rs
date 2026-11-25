@@ -528,9 +528,13 @@ fn extract_string_map(text: &str, wanted: &str) -> BTreeMap<String, String> {
 /// merge preserves are read: concept, reason, first run, and state.
 /// Evidence keys written by this engine never reuse those field
 /// names, which is what makes the sequential scan unambiguous.
+/// The queue's home is `.recension/queue.json`; the legacy home
+/// under `upkeep/` is read as a fallback so a bundle's queue
+/// history survives the move.
 fn load_previous_queue(root: &Path) -> Vec<QueueItem> {
-    let path = root.join("upkeep").join("queue.json");
-    let Ok(text) = std::fs::read_to_string(path) else {
+    let text = std::fs::read_to_string(root.join(".recension").join("queue.json"))
+        .or_else(|_| std::fs::read_to_string(root.join("upkeep").join("queue.json")));
+    let Ok(text) = text else {
         return Vec::new();
     };
     let mut items = Vec::new();
@@ -977,10 +981,11 @@ fn apply_writes(
             actions.push(format!("index regenerated: {index_rel}"));
         }
     }
-    // Queue files, Markdown with a JSON twin.
-    let upkeep_dir = root.join("upkeep");
+    // Queue files, Markdown with a JSON twin, in the engine's own
+    // dot directory beside the pass state.
+    let upkeep_dir = root.join(".recension");
     std::fs::create_dir_all(&upkeep_dir)
-        .map_err(|e| format!("cannot create upkeep directory: {e}"))?;
+        .map_err(|e| format!("cannot create state directory: {e}"))?;
     let queue_json = Json::obj(vec![
         ("as_of", Json::Str(as_of.to_string())),
         (
@@ -1010,7 +1015,20 @@ fn apply_writes(
     queue_md.push('\n');
     std::fs::write(upkeep_dir.join("queue.md"), queue_md)
         .map_err(|e| format!("cannot write queue.md: {e}"))?;
-    actions.push("queue written to upkeep/queue.md and upkeep/queue.json".to_string());
+    actions.push("queue written to .recension/queue.md and .recension/queue.json".to_string());
+    // A legacy queue under upkeep/ is removed once its successor
+    // is written, but only when it reads as this engine's own
+    // queue file, so an unrelated file is never deleted.
+    let legacy_json = root.join("upkeep").join("queue.json");
+    if legacy_json.exists()
+        && std::fs::read_to_string(&legacy_json).is_ok_and(|text| text.contains("\"items\""))
+        && std::fs::remove_file(&legacy_json).is_ok()
+    {
+        let _ = std::fs::remove_file(root.join("upkeep").join("queue.md"));
+        actions.push(
+            "legacy queue files under upkeep/ removed after the move to .recension/".to_string(),
+        );
+    }
     // Pass state for the next pass's baseline.
     let state_dir = root.join(".recension");
     std::fs::create_dir_all(&state_dir)

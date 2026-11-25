@@ -1,8 +1,10 @@
 //! The re-verification queue.
 //!
 //! The queue is the pass's main human-facing output. It lives in the
-//! bundle as a Markdown file with a JSON twin under an `upkeep`
-//! directory at the bundle root. Items carry a reason from a fixed
+//! bundle as a Markdown file with a JSON twin under the bundle's
+//! `.recension` directory, the engine's own state home, where
+//! bundle validators and the concept inventory do not read. Items
+//! carry a reason from a fixed
 //! vocabulary, the evidence values behind the item, the runs that
 //! first raised and last confirmed it, and a state. The engine moves
 //! an item to done only on observed evidence; a human or agent moves
