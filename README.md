@@ -2,28 +2,41 @@
 
 anchorwatch is a deterministic upkeep engine for knowledge bundles written in the Open Knowledge Format, OKF v0.3. A bundle that nobody maintains quietly goes stale. Facts pass their review dates, verification lapses, one document replaces another without the replacement being recorded, and the index drifts away from the files it lists. anchorwatch runs the scheduled pass that catches all of that and writes down what it did.
 
-## What it does
+## The upkeep pass
 
-An upkeep pass walks a bundle and performs the maintenance the OKF spec leaves to the bundle owner. It recomputes which concepts have passed their `stale_after` review date. It checks the currency of each concept's verification against the trust auditor and queues anything lapsed for re-verification. It applies supersessions the bundle already declares and audits them for defects such as cycles, missing targets, and status mismatches. It regenerates the bundle indexes and the bundle log, preserving hand-written content the spec protects. Where a bundle carries a claim registry, it checks the registry for drift against the concepts it indexes.
+An upkeep pass walks a bundle and performs the maintenance the OKF spec leaves to the bundle owner. It recomputes which concepts have passed their `stale_after` review date, working from the trust auditor's freshness findings. It checks the currency of each concept's verification against the auditor and queues anything lapsed for re-verification. It audits the supersessions the bundle declares for defects such as cycles, missing targets, and current documents pointing at deprecated ones. It checks declared provenance for sources that no longer resolve and for content that has drifted from its recorded hash. It regenerates bundle indexes whose link sets have drifted, leaving any index that carries hand-written prose untouched. And when a concept's type key has been stripped, it restores the key from the migrator's manifest and logs the repair, the one frontmatter change the engine is allowed to make on its own.
 
-The pass is deterministic. Run it twice over the same bundle with the same pinned date and the result is identical, so it can run unattended from cron or CI and its output can be diffed and reviewed like any other change.
+Everything the pass decides a human should look at lands in a re-verification queue, a Markdown file with a JSON twin kept in the bundle's own state directory, with a reason for every item and the evidence behind it. Items keep the date they were first raised across passes, keep any state a human has set on them, and close only when a later pass observes that the condition is gone.
 
-The engine has hard limits it never crosses on its own. It never edits the meaning of a document, never stamps a verification event, never invents a review date, never chooses what supersedes what, and never deletes a file. Anything needing judgement becomes an item in the re-verification queue, with a reason code, for a human or an agent to decide.
+The pass is deterministic. Run it twice over the same bundle with the same pinned date and the report is byte identical, so it can run unattended from cron or CI and its output can be diffed and reviewed like any other change. A dry run writes nothing. Apply mode writes the queue, the pass state, the regenerated indexes, any type restoration, and a dated entry in the bundle log, newest first as the spec requires.
 
-## The migrator
+The engine has hard limits it never crosses on its own. It never edits the meaning of a document, never stamps a verification event, never invents a review date, never chooses what supersedes what, and never deletes a file. Anything needing judgement becomes a queue item for a human or an agent to decide.
 
-anchorwatch also converts an existing knowledge tree into an OKF v0.3 bundle. Conversion is driven by a source profile, and every construct that cannot be carried across is written into a loss ledger that ships with the bundle. Each ledger entry names the construct, how often it occurred, what happened to it, and whether it was load-bearing. A migration that reports no loss has not been measured honestly, and the ledger format treats a zero-loss report as a failed run.
+## The drift check
+
+anchorwatch also checks semantic layer definitions against the live warehouse schema they describe, the upkeep half of a cross-ecosystem grading programme. Definitions drift from the warehouse quietly. A column a metric depends on is renamed or dropped, a declared type stops matching the live one, and nothing notices until a dashboard breaks. The check compares an exported definition against an exported live schema and queues every divergence as a drift item, with a rename proposal where exactly one plausible rename exists.
+
+The engine never connects to a warehouse and never holds a vendor credential. Both sides are exported files. Definitions are read in the shapes the vendors export, dbt and Ossie semantic manifests, Snowflake semantic view definitions, Databricks metric views, and Genie space exports, routed by the document's own contents rather than its file name. The live side is one documented JSON shape listing relations and their columns.
 
 ## How it is used
 
 ```text
-anchorwatch migrate --profile claude-memory --source ~/memory --out ./bundle
-anchorwatch upkeep --bundle ./bundle --as-of 2026-11-20
-anchorwatch queue --bundle ./bundle
+anchorwatch upkeep --bundle ./bundle --as-of 2026-11-24T00:00:00Z
+anchorwatch upkeep --bundle ./bundle --as-of 2026-11-24T00:00:00Z --apply
+anchorwatch drift --definitions ./manifest.json --live ./live-schema.json --state ./drift-state --as-of 2026-11-24T00:00:00Z --apply
 ```
 
-The migrator writes the bundle and its loss ledger. The upkeep command runs one pass and writes the pass results into the bundle log. The queue command prints the open re-verification items. Scheduling is left to the owner, through cron, a CI schedule, or any other runner, because the engine itself is a single run that ends.
+The upkeep command runs one pass over a bundle. Without --apply it reports and writes nothing. The drift command runs one comparison and keeps its own queue and state in the directory named by --state. Both commands print a JSON report by default and a Markdown report with --format md. Scheduling is left to the owner, through cron, a CI schedule, or any other runner, because the engine itself is a single run that ends.
 
-## Current state
+## The migrator
 
-This repository is at the scaffold stage. The workspace, the two crates, and the command entry point are in place, and the design record behind the build has passed its gate review. The migrator is the first build milestone, followed by the upkeep pass. Nothing here is ready for use yet.
+The programme's other half is a migrator that converts an existing knowledge tree into an OKF v0.3 bundle. Conversion is driven by a source profile, and every construct that cannot be carried across is written into a loss ledger that ships with the bundle. Each ledger entry names the construct, how often it occurred, what happened to it, and whether it was load-bearing. The migrator's design and the ledger format are settled, and a prototype bundle stands converted under them. The general migrator tool is the next build in the programme. The upkeep engine and the drift check above are built, tested, and in use.
+
+## Building
+
+```text
+cargo build --release
+cargo test
+```
+
+The workspace holds two crates with no third-party dependencies. anchorwatch-core carries the engine, the auditor contract, and the drift check. anchorwatch-cli carries the command line entry point.
