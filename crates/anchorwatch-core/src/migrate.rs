@@ -1177,8 +1177,31 @@ fn convert_whole(
 fn split_sections(text: &str) -> Vec<(Option<String>, String)> {
     let mut sections: Vec<(Option<String>, String)> = Vec::new();
     let mut current: Option<(Option<String>, String)> = None;
+    // A heading-shaped line inside a fenced code block is code,
+    // not a heading. The splitter tracks the fence it is inside
+    // by the character that opened it, so a section's code samples
+    // keep their own heading-shaped lines instead of splitting
+    // the section at them.
+    let mut fence: Option<char> = None;
     for line in text.split_inclusive('\n') {
-        if let Some(heading) = line.strip_prefix("## ") {
+        let trimmed = line.trim_start();
+        let marker = if trimmed.starts_with("```") {
+            Some('`')
+        } else if trimmed.starts_with("~~~") {
+            Some('~')
+        } else {
+            None
+        };
+        if let Some(marker) = marker {
+            match fence {
+                None => fence = Some(marker),
+                Some(open) if open == marker => fence = None,
+                _ => {}
+            }
+        }
+        if fence.is_none()
+            && let Some(heading) = line.strip_prefix("## ")
+        {
             if let Some(done) = current.take() {
                 sections.push(done);
             }
