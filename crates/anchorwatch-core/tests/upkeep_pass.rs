@@ -541,6 +541,46 @@ fn a_review_date_that_does_not_exist_is_malformed_not_stale() {
 }
 
 #[test]
+fn a_crlf_root_index_keeps_its_frontmatter_when_regenerated() {
+    // Register R2-01. The root index's frontmatter preservation
+    // sliced on line-feed delimiters only, so regenerating a
+    // carriage-return bundle's drifted root index replaced its
+    // declared frontmatter with the fallback block.
+    let dir = std::env::temp_dir().join(format!("anchorwatch-pass-crlf-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(
+        &dir,
+        "concepts/a.md",
+        "---\ntype: Note\ntitle: \"A\"\nstale_after: 2027-01-01\n---\nbody a\n",
+    );
+    write_file(
+        &dir,
+        "index.md",
+        "---\r\nokf_version: \"0.3\"\r\ntitle: \"CRLF bundle\"\r\nlicense: \"MIT\"\r\n---\r\n\r\n# CRLF bundle\r\n",
+    );
+    write_file(&dir, "concepts/index.md", "# concepts\n\n* [A](a.md)\n");
+    write_file(&dir, "log.md", "# Bundle Update Log\n");
+    let report = run_pass(&dir, "2026-11-24T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    assert!(
+        report
+            .actions
+            .iter()
+            .any(|a| a == "index regenerated: index.md"),
+        "actions: {:?}",
+        report.actions
+    );
+    let regenerated = std::fs::read_to_string(dir.join("index.md")).unwrap();
+    assert!(
+        regenerated.contains("license: \"MIT\""),
+        "declared frontmatter preserved: {regenerated}"
+    );
+    assert!(regenerated.contains("title: \"CRLF bundle\""));
+    assert!(!regenerated.contains("title: \"Bundle index\""));
+    assert!(regenerated.contains("* [A](concepts/a.md)"));
+}
+
+#[test]
 fn an_index_over_no_concepts_is_reported_and_never_rewritten() {
     // Register R1-05. A directory holding no concepts can still
     // carry an index, over assets or anything else the engine has
