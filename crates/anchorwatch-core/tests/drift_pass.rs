@@ -163,6 +163,96 @@ fn a_snowflake_view_check_raises_type_drift() {
     assert_eq!(report.queue[0].priority, 1);
 }
 
+const METRIC_VIEW: &str = r#"version: 1.1
+source: main.sales.orders
+fields:
+  - name: channel
+    expr: channel
+  - name: ordered_on
+    expr: order_date
+measures:
+  - name: revenue
+    expr: SUM(amount)
+"#;
+
+const METRIC_LIVE: &str = r#"{
+  "tables": {
+    "main.sales.orders": {
+      "columns": [
+        {"name": "channel", "type": "text"},
+        {"name": "orderdate", "type": "date"}
+      ]
+    }
+  }
+}"#;
+
+#[test]
+fn a_metric_view_check_raises_the_rename_proposal() {
+    let dir = std::env::temp_dir().join(format!(
+        "anchorwatch-drift-metricview-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(&dir, "definitions.yaml", METRIC_VIEW);
+    write_file(&dir, "live.json", METRIC_LIVE);
+    let report = run_drift_check(
+        &dir.join("definitions.yaml"),
+        &dir.join("live.json"),
+        &dir.join("state"),
+        "2026-11-24T00:00:00Z",
+        &StubDriftAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
+    assert_eq!(report.definitions_format, "databricks-metric-view");
+    assert_eq!(report.references, 2);
+    assert_eq!(report.queue.len(), 1);
+    assert_eq!(report.queue[0].concept, "orders.field.ordered_on");
+    assert_eq!(report.queue[0].reason, DEFINITION_DRIFT);
+    assert_eq!(report.queue[0].priority, 2);
+}
+
+const GENIE: &str = r#"{
+  "version": 2,
+  "data_sources": {"tables": [
+    {"identifier": "main.sales.orders", "column_configs": [{"name": "order_id"}, {"name": "amount"}]}
+  ]},
+  "benchmarks": {"questions": []}
+}"#;
+
+const GENIE_LIVE: &str = r#"{
+  "tables": {
+    "main.sales.orders": {
+      "columns": [{"name": "order_id", "type": "integer"}]
+    }
+  }
+}"#;
+
+#[test]
+fn a_genie_space_check_raises_the_missing_column() {
+    let dir = std::env::temp_dir().join(format!("anchorwatch-drift-genie-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(&dir, "definitions.json", GENIE);
+    write_file(&dir, "live.json", GENIE_LIVE);
+    let report = run_drift_check(
+        &dir.join("definitions.json"),
+        &dir.join("live.json"),
+        &dir.join("state"),
+        "2026-11-24T00:00:00Z",
+        &StubDriftAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
+    assert_eq!(report.definitions_format, "databricks-genie-space");
+    assert_eq!(report.references, 2);
+    assert_eq!(report.queue.len(), 1);
+    assert_eq!(report.queue[0].concept, "orders.column.amount");
+    assert_eq!(report.queue[0].reason, DEFINITION_DRIFT);
+    assert_eq!(report.queue[0].priority, 1);
+}
+
 #[test]
 fn two_checks_over_the_same_snapshots_are_byte_identical() {
     let dir = fixture("determinism");
