@@ -381,6 +381,9 @@ fn write_bundle(
     concepts: &[ConvertedConcept],
     entries: &[LedgerEntry],
 ) -> Result<(), String> {
+    // The bundle root itself: a tree that converts no concepts
+    // still gets its indexes, log, and ledger written into it.
+    std::fs::create_dir_all(out).map_err(|e| format!("cannot create {}: {e}", out.display()))?;
     for concept in concepts {
         let path = out.join(&concept.relpath);
         if let Some(parent) = path.parent() {
