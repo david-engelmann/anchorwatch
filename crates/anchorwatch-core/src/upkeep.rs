@@ -695,10 +695,11 @@ fn collect_json_files(root: &Path, dir: &Path, out: &mut Vec<String>) {
         }
         if kind.is_dir() {
             collect_json_files(root, &path, out);
-        } else if kind.is_file() && path.extension().is_some_and(|ext| ext == "json") {
-            if let Ok(rel) = path.strip_prefix(root) {
-                out.push(rel.to_string_lossy().replace('\\', "/"));
-            }
+        } else if kind.is_file()
+            && path.extension().is_some_and(|ext| ext == "json")
+            && let Ok(rel) = path.strip_prefix(root)
+        {
+            out.push(rel.to_string_lossy().replace('\\', "/"));
         }
     }
 }
