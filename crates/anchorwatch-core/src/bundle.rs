@@ -95,10 +95,17 @@ impl Bundle {
 }
 
 fn collect_markdown(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), String> {
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map_err(|e| format!("cannot list {}: {e}", dir.display()))?
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .collect();
+    let mut entries: Vec<PathBuf> = Vec::new();
+    for entry in
+        std::fs::read_dir(dir).map_err(|e| format!("cannot list {}: {e}", dir.display()))?
+    {
+        // An entry that errors mid-listing is reported like any
+        // other unreadable path, never dropped: a dropped entry
+        // is a file missing from the inventory, and a partial
+        // inventory would corrupt the pass.
+        let entry = entry.map_err(|e| format!("cannot list {}: {e}", dir.display()))?;
+        entries.push(entry.path());
+    }
     entries.sort();
     for path in entries {
         let name = path
