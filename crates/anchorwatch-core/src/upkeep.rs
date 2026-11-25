@@ -390,8 +390,16 @@ pub fn run_pass(
     // registry. The registry is discovered by its shape, never by
     // its address, and checked against the bundle as it now stands.
     // A bundle without one is simply not checked, and a bundle with
-    // more than one candidate is reported rather than guessed.
-    match find_claim_registry(root) {
+    // more than one candidate is reported rather than guessed. A
+    // file that nearly carries the shape is named in a note, so
+    // the check's silence is never mistaken for a clean result.
+    let (registry_search, near_misses) = find_claim_registry(root);
+    for relpath in &near_misses {
+        notes.push(format!(
+            "a file carries a claims array whose entries do not all name an id and a concept, and was not checked as a registry: {relpath}"
+        ));
+    }
+    match registry_search {
         RegistrySearch::Found { relpath, claims } => {
             notes.push(format!(
                 "claim registry checked: {relpath} ({} claims)",
@@ -579,13 +587,18 @@ enum RegistrySearch {
 /// never assumed, because the registry is another product's
 /// artefact and this engine does not set its conventions. A file
 /// that does not parse, or parses to any other shape, is not a
-/// candidate. This shape is the proposed contract of design record
-/// section 30, held open for reconciliation with the product seat.
-fn find_claim_registry(root: &Path) -> RegistrySearch {
+/// candidate. A file that carries a `claims` array whose entries
+/// fail the entry shape is a near miss: not a candidate either,
+/// but returned alongside the outcome so the pass can name it in
+/// a note instead of passing over it in silence. This shape is
+/// the proposed contract of design record section 30, held open
+/// for reconciliation with the product seat.
+fn find_claim_registry(root: &Path) -> (RegistrySearch, Vec<String>) {
     let mut json_files = Vec::new();
     collect_json_files(root, root, &mut json_files);
     json_files.sort();
     let mut found = Vec::new();
+    let mut near_misses = Vec::new();
     for relpath in json_files {
         let Ok(text) = std::fs::read_to_string(root.join(&relpath)) else {
             continue;
@@ -630,16 +643,19 @@ fn find_claim_registry(root: &Path) -> RegistrySearch {
         }
         if shape_holds {
             found.push((relpath, claims));
+        } else {
+            near_misses.push(relpath);
         }
     }
-    match found.len() {
+    let search = match found.len() {
         0 => RegistrySearch::Absent,
         1 => {
             let (relpath, claims) = found.pop().unwrap();
             RegistrySearch::Found { relpath, claims }
         }
         _ => RegistrySearch::Ambiguous(found.into_iter().map(|(relpath, _)| relpath).collect()),
-    }
+    };
+    (search, near_misses)
 }
 
 /// Collects the bundle's JSON files as relative paths, including
