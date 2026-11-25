@@ -301,6 +301,44 @@ fn a_claim_registry_is_checked_against_the_bundle() {
 }
 
 #[test]
+fn a_near_miss_registry_is_named_not_passed_over() {
+    // Register R1-04. A file whose claims entries fail the entry
+    // shape was silently no candidate at all, so the pass said
+    // nothing and the silence read as a clean result. The pass now
+    // names the file in a note and still does not check it.
+    let dir = fixture("registry-near-miss");
+    write_file(
+        &dir,
+        "claims.json",
+        "{\"claims\": [{\"id\": \"claim-1\", \"concept\": \"concepts/a.md\"}, {\"id\": \"claim-2\"}]}",
+    );
+    let report = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|n| n.contains("was not checked as a registry: claims.json")),
+        "notes: {:?}",
+        report.notes
+    );
+    assert!(
+        !report
+            .notes
+            .iter()
+            .any(|n| n.starts_with("claim registry checked")),
+        "notes: {:?}",
+        report.notes
+    );
+    assert!(
+        !report
+            .queue
+            .iter()
+            .any(|item| item.reason == REGISTRY_DRIFT),
+        "a near miss is reported, never checked"
+    );
+}
+
+#[test]
 fn two_claim_registries_are_reported_not_guessed() {
     let dir = fixture("registry-ambiguous");
     let registry = "{\"claims\": [{\"id\": \"claim-1\", \"concept\": \"concepts/a.md\"}]}";
