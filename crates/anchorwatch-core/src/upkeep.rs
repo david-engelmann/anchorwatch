@@ -657,7 +657,7 @@ fn utf8_len(first: u8) -> usize {
 }
 
 /// Merges freshly derived items with the previous queue.
-fn merge_queue(
+pub(crate) fn merge_queue(
     fresh: Vec<QueueItem>,
     previous: Vec<QueueItem>,
     run_id: &str,

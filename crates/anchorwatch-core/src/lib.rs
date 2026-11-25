@@ -16,6 +16,7 @@
 
 pub mod auditor;
 pub mod bundle;
+pub mod drift;
 pub mod frontmatter;
 pub mod json;
 pub mod queue;
