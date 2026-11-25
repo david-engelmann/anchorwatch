@@ -24,13 +24,16 @@ The engine never connects to a warehouse and never holds a vendor credential. Bo
 anchorwatch upkeep --bundle ./bundle --as-of 2026-11-24T00:00:00Z
 anchorwatch upkeep --bundle ./bundle --as-of 2026-11-24T00:00:00Z --apply
 anchorwatch drift --definitions ./manifest.json --live ./live-schema.json --state ./drift-state --as-of 2026-11-24T00:00:00Z --apply
+anchorwatch migrate --profile claude-memory --source ./memory-tree --out ./bundle --as-of 2026-11-24T00:00:00Z
 ```
 
-The upkeep command runs one pass over a bundle. Without --apply it reports and writes nothing. The drift command runs one comparison and keeps its own queue and state in the directory named by --state. Both commands print a JSON report by default and a Markdown report with --format md. Scheduling is left to the owner, through cron, a CI schedule, or any other runner, because the engine itself is a single run that ends.
+The upkeep command runs one pass over a bundle. Without --apply it reports and writes nothing. The drift command runs one comparison and keeps its own queue and state in the directory named by --state. The migrate command converts one tree with the named profile and prints its run report, listing the construct classes found against the ledger entries written. All three commands print a JSON report by default and a Markdown report with --format md. Scheduling is left to the owner, through cron, a CI schedule, or any other runner, because the engine itself is a single run that ends.
 
 ## The migrator
 
-The programme's other half is a migrator that converts an existing knowledge tree into an OKF v0.3 bundle. Conversion is driven by a source profile, and every construct that cannot be carried across is written into a loss ledger that ships with the bundle. Each ledger entry names the construct, how often it occurred, what happened to it, and whether it was load-bearing. The migrator's design and the ledger format are settled, and a prototype bundle stands converted under them. The general migrator tool is the next build in the programme. The upkeep engine and the drift check above are built, tested, and in use.
+The programme's other half is a migrator that converts an existing knowledge tree into an OKF v0.3 bundle. Conversion is driven by a source profile, and every construct the profile finds is accounted for in a loss ledger that ships with the bundle in Markdown and JSON forms. Each entry names the construct, how often it occurred, what happened to it, and whether losing it was load-bearing. A run that cannot account for every construct it found fails before it writes anything. A ledger claiming nothing was lost fails the run's honesty gate, and a load-bearing construct recorded as lost fails it too, visibly, in the report and in the command's exit status.
+
+Two profiles ship with the tool. The claude-memory profile converts a Muse memory tree, with people and groups mapped or preserved as extension keys and the curated memory file and the dated daily logs split into one concept per section at their own headings. The okf-native profile converts a bundle that is already OKF, at any declared version, carrying concepts, assets, log history, and bundle metadata across, and rewriting the path values whose meaning changed between 0.2 and 0.3 so they name the same targets under the new reading.
 
 ## Building
 
@@ -39,4 +42,4 @@ cargo build --release
 cargo test
 ```
 
-The workspace holds two crates with no third-party dependencies. anchorwatch-core carries the engine, the auditor contract, and the drift check. anchorwatch-cli carries the command line entry point.
+The workspace holds two crates with no third-party dependencies. anchorwatch-core carries the engine, the auditor contract, the drift check, and the migrator. anchorwatch-cli carries the command line entry point.
