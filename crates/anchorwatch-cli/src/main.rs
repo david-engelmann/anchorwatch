@@ -17,7 +17,7 @@ use std::process::ExitCode;
 
 use anchorwatch_core::auditor::StubAuditor;
 use anchorwatch_core::drift::{StubDriftAuditor, run_drift_check};
-use anchorwatch_core::migrate::{ClaudeMemoryProfile, Profile, run_migration};
+use anchorwatch_core::migrate::{ClaudeMemoryProfile, OkfNativeProfile, Profile, run_migration};
 use anchorwatch_core::upkeep::{Mode, run_pass};
 
 fn main() -> ExitCode {
@@ -199,8 +199,9 @@ fn run_migrate(args: &[String]) -> ExitCode {
     };
     let profile: Box<dyn Profile> = match profile_name.as_str() {
         "claude-memory" => Box::new(ClaudeMemoryProfile),
+        "okf-native" => Box::new(OkfNativeProfile),
         other => {
-            eprintln!("unknown profile: {other} (known: claude-memory)");
+            eprintln!("unknown profile: {other} (known: claude-memory, okf-native)");
             return ExitCode::FAILURE;
         }
     };
