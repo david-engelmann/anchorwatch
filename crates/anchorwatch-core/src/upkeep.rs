@@ -978,7 +978,11 @@ fn index_has_prose(text: &str) -> bool {
             continue;
         }
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with("* [") {
+        if line.is_empty()
+            || line.starts_with('#')
+            || line.starts_with("* [")
+            || line.starts_with("- [")
+        {
             continue;
         }
         return true;
