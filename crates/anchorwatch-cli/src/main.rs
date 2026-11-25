@@ -43,6 +43,26 @@ fn main() -> ExitCode {
     }
 }
 
+/// Reads a `--format` value as whether the report prints as
+/// Markdown. The two known values are the two formats the tool
+/// prints; anything else, or no value at all, is refused rather
+/// than silently treated as JSON, so a mistyped format never
+/// yields the wrong artefact under a success exit.
+fn parse_format(value: Option<&String>) -> Result<bool, ExitCode> {
+    match value.map(String::as_str) {
+        Some("md") => Ok(true),
+        Some("json") => Ok(false),
+        Some(other) => {
+            eprintln!("unknown format: {other} (known: json, md)");
+            Err(ExitCode::FAILURE)
+        }
+        None => {
+            eprintln!("--format needs a value (json or md)");
+            Err(ExitCode::FAILURE)
+        }
+    }
+}
+
 fn run_upkeep(args: &[String]) -> ExitCode {
     let mut bundle: Option<PathBuf> = None;
     let mut as_of: Option<String> = None;
@@ -62,7 +82,10 @@ fn run_upkeep(args: &[String]) -> ExitCode {
             "--apply" => mode = Mode::Apply,
             "--format" => {
                 i += 1;
-                markdown = args.get(i).map(String::as_str) == Some("md");
+                match parse_format(args.get(i)) {
+                    Ok(md) => markdown = md,
+                    Err(code) => return code,
+                }
             }
             other => {
                 eprintln!("unknown argument: {other}");
@@ -120,7 +143,10 @@ fn run_drift(args: &[String]) -> ExitCode {
             "--apply" => mode = Mode::Apply,
             "--format" => {
                 i += 1;
-                markdown = args.get(i).map(String::as_str) == Some("md");
+                match parse_format(args.get(i)) {
+                    Ok(md) => markdown = md,
+                    Err(code) => return code,
+                }
             }
             other => {
                 eprintln!("unknown argument: {other}");
@@ -180,7 +206,10 @@ fn run_migrate(args: &[String]) -> ExitCode {
             }
             "--format" => {
                 i += 1;
-                markdown = args.get(i).map(String::as_str) == Some("md");
+                match parse_format(args.get(i)) {
+                    Ok(md) => markdown = md,
+                    Err(code) => return code,
+                }
             }
             other => {
                 eprintln!("unknown argument: {other}");
@@ -222,5 +251,18 @@ fn run_migrate(args: &[String]) -> ExitCode {
             eprintln!("migration failed: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_format;
+
+    #[test]
+    fn known_formats_parse_and_unknown_ones_refuse() {
+        assert_eq!(parse_format(Some(&"md".to_string())).ok(), Some(true));
+        assert_eq!(parse_format(Some(&"json".to_string())).ok(), Some(false));
+        assert!(parse_format(Some(&"yaml".to_string())).is_err());
+        assert!(parse_format(None).is_err());
     }
 }
