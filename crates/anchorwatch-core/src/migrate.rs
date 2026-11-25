@@ -330,6 +330,31 @@ pub fn run_migration(
             source.display()
         ));
     }
+    // The output is a complete bundle by construction, so a
+    // directory that already holds anything can only be an
+    // earlier run's residue or another bundle entirely. Writing
+    // into it would leave ghost files standing in the bundle
+    // under a manifest that does not name them, so a non-empty
+    // output is refused at the run's head, by the same reasoning
+    // as the overlap. An output that does not exist yet, or
+    // exists empty, is the ordinary case and proceeds.
+    match std::fs::read_dir(out) {
+        Ok(mut entries) => {
+            if entries.next().is_some() {
+                return Err(format!(
+                    "output directory {} is not empty; refusing to migrate into it",
+                    out.display()
+                ));
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(format!(
+                "cannot list output directory {}: {e}",
+                out.display()
+            ));
+        }
+    }
     let snapshot = source_snapshot(source)?;
     let run_material = format!("{snapshot}|{as_of}|{}", profile.name());
     let run_id = format!("run-{}", &sha256_hex(run_material.as_bytes())[..12]);
