@@ -515,80 +515,43 @@ struct PrevTier {
 
 /// Loads `.recension/pass-state.json` written by the previous apply
 /// pass. The file is this engine's own format: two flat maps from
-/// concept path to tier name and to current-event count.
+/// concept path to tier name and to current-event count, read
+/// through the engine's one JSON parser like every other artefact
+/// the engine consumes.
 fn load_pass_state(root: &Path) -> BTreeMap<String, PrevTier> {
     let path = root.join(".recension").join("pass-state.json");
     let Ok(text) = std::fs::read_to_string(path) else {
         return BTreeMap::new();
     };
-    let tiers = extract_string_map(&text, "tiers");
-    let counts = extract_string_map(&text, "current_events");
+    let Some(parsed) = parse(&text) else {
+        return BTreeMap::new();
+    };
+    let tiers = parsed.get("tiers").and_then(|v| v.as_obj());
+    let counts = parsed.get("current_events").and_then(|v| v.as_obj());
+    let Some(tiers) = tiers else {
+        return BTreeMap::new();
+    };
     tiers
-        .into_iter()
-        .map(|(concept, tier)| {
+        .iter()
+        .filter_map(|(concept, tier)| {
+            let tier = tier.as_str()?.to_string();
             let current_events = counts
-                .get(&concept)
-                .and_then(|n| n.parse().ok())
+                .and_then(|map| map.get(concept))
+                .and_then(|value| match value {
+                    Parsed::Str(text) => text.parse().ok(),
+                    Parsed::Num(text) => text.parse().ok(),
+                    _ => None,
+                })
                 .unwrap_or(0);
-            (
-                concept,
+            Some((
+                concept.clone(),
                 PrevTier {
                     tier,
                     current_events,
                 },
-            )
+            ))
         })
         .collect()
-}
-
-/// Extracts one flat string-to-string object from JSON text by key.
-/// The engine reads only its own artefacts and the migrator's
-/// manifest, whose shapes are flat by construction; this narrow scan
-/// is deliberate, and it never runs on untrusted shapes.
-fn extract_string_map(text: &str, wanted: &str) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    let needle = format!("\"{wanted}\"");
-    let Some(start) = text.find(&needle) else {
-        return out;
-    };
-    let rest = &text[start + needle.len()..];
-    let Some(open) = rest.find('{') else {
-        return out;
-    };
-    let body = &rest[open + 1..];
-    let mut depth = 1usize;
-    let mut current = String::new();
-    let mut entries = Vec::new();
-    for ch in body.chars() {
-        match ch {
-            '{' => {
-                depth += 1;
-                current.push(ch);
-            }
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    break;
-                }
-                current.push(ch);
-            }
-            ',' if depth == 1 => entries.push(std::mem::take(&mut current)),
-            _ => current.push(ch),
-        }
-    }
-    if !current.trim().is_empty() {
-        entries.push(current);
-    }
-    for entry in entries {
-        if let Some((key, value)) = entry.split_once(':') {
-            let key = key.trim().trim_matches('"').to_string();
-            let value = value.trim().trim_matches('"').to_string();
-            if !key.is_empty() {
-                out.insert(key, value);
-            }
-        }
-    }
-    out
 }
 
 /// One entry of a generated claim registry, reduced to the fields
@@ -706,138 +669,49 @@ fn collect_json_files(root: &Path, dir: &Path, out: &mut Vec<String>) {
 
 /// Loads the queue as the previous pass left it. Only the fields the
 /// merge preserves are read: concept, reason, first run, and state.
-/// Evidence keys written by this engine never reuse those field
-/// names, which is what makes the sequential scan unambiguous.
 /// The queue's home is `.recension/queue.json`; the legacy home
 /// under `upkeep/` is read as a fallback so a bundle's queue
-/// history survives the move.
+/// history survives the move. The file is read through the engine's
+/// one JSON parser, the same reader the drift queue uses, so a
+/// queue file that does not parse reads as no previous queue
+/// rather than as whatever a partial scan could salvage.
 fn load_previous_queue(root: &Path) -> Vec<QueueItem> {
     let text = std::fs::read_to_string(root.join(".recension").join("queue.json"))
         .or_else(|_| std::fs::read_to_string(root.join("upkeep").join("queue.json")));
     let Ok(text) = text else {
         return Vec::new();
     };
+    let Some(parsed) = parse(&text) else {
+        return Vec::new();
+    };
+    let Some(entries) = parsed.get("items").and_then(|v| v.as_arr()) else {
+        return Vec::new();
+    };
     let mut items = Vec::new();
-    let mut current: Option<QueueItem> = None;
-    for (key, value) in scan_string_fields(&text) {
-        match key.as_str() {
-            "concept" => {
-                if let Some(item) = current.take() {
-                    items.push(item);
-                }
-                current = Some(QueueItem::new(value, "", Vec::new(), ""));
-            }
-            "reason" => {
-                if let Some(item) = current.as_mut()
-                    && item.reason.is_empty()
-                {
-                    item.reason = value;
-                }
-            }
-            "first_raised" => {
-                if let Some(item) = current.as_mut()
-                    && item.first_raised.is_empty()
-                {
-                    item.first_raised = value;
-                }
-            }
-            "state" => {
-                if let Some(item) = current.as_mut()
-                    && let Some(state) = QueueState::from_name(&value)
-                {
-                    item.state = state;
-                }
-            }
-            _ => {}
+    for entry in entries {
+        let (Some(concept), Some(reason)) = (
+            entry.get("concept").and_then(|v| v.as_str()),
+            entry.get("reason").and_then(|v| v.as_str()),
+        ) else {
+            continue;
+        };
+        if concept.is_empty() || reason.is_empty() {
+            continue;
         }
-    }
-    if let Some(item) = current.take() {
+        let mut item = QueueItem::new(concept.to_string(), reason, Vec::new(), "");
+        if let Some(first) = entry.get("first_raised").and_then(|v| v.as_str()) {
+            item.first_raised = first.to_string();
+        }
+        if let Some(state) = entry
+            .get("state")
+            .and_then(|v| v.as_str())
+            .and_then(QueueState::from_name)
+        {
+            item.state = state;
+        }
         items.push(item);
     }
     items
-        .into_iter()
-        .filter(|item| !item.concept.is_empty() && !item.reason.is_empty())
-        .collect()
-}
-
-/// Scans JSON text for `"key": "value"` string pairs, in order.
-fn scan_string_fields(text: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    let bytes = text.as_bytes();
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i] == b'"' {
-            let Some((value, next)) = read_json_string(text, i) else {
-                break;
-            };
-            let mut j = next;
-            while j < bytes.len() && (bytes[j] as char).is_whitespace() {
-                j += 1;
-            }
-            if j < bytes.len() && bytes[j] == b':' {
-                j += 1;
-                while j < bytes.len() && (bytes[j] as char).is_whitespace() {
-                    j += 1;
-                }
-                if j < bytes.len()
-                    && bytes[j] == b'"'
-                    && let Some((field_value, after)) = read_json_string(text, j)
-                {
-                    out.push((value, field_value));
-                    i = after;
-                    continue;
-                }
-            }
-            i = next;
-        } else {
-            i += 1;
-        }
-    }
-    out
-}
-
-fn read_json_string(text: &str, start: usize) -> Option<(String, usize)> {
-    let bytes = text.as_bytes();
-    if bytes.get(start) != Some(&b'"') {
-        return None;
-    }
-    let mut out = String::new();
-    let mut i = start + 1;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'"' => return Some((out, i + 1)),
-            b'\\' => {
-                let esc = bytes.get(i + 1)?;
-                match esc {
-                    b'n' => out.push('\n'),
-                    b't' => out.push('\t'),
-                    b'r' => out.push('\r'),
-                    b'"' => out.push('"'),
-                    b'\\' => out.push('\\'),
-                    _ => out.push(*esc as char),
-                }
-                i += 2;
-            }
-            _ => {
-                let ch_len = utf8_len(bytes[i]);
-                out.push_str(&text[i..i + ch_len]);
-                i += ch_len;
-            }
-        }
-    }
-    None
-}
-
-fn utf8_len(first: u8) -> usize {
-    if first < 0x80 {
-        1
-    } else if first >> 5 == 0b110 {
-        2
-    } else if first >> 4 == 0b1110 {
-        3
-    } else {
-        4
-    }
 }
 
 /// Merges freshly derived items with the previous queue.

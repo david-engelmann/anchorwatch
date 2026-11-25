@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::frontmatter::{Frontmatter, parse_document};
+use crate::json::parse;
 use crate::sha256::sha256_hex;
 
 /// One Markdown file in the bundle, with the frontmatter the engine reads.
@@ -147,47 +148,16 @@ impl StateManifest {
         };
         let mut concepts = BTreeMap::new();
         // The manifest is a flat object with a nested "concepts" map
-        // of path to type. The engine reads it with a narrow scan
-        // rather than a general JSON parser, because the manifest is
-        // its own producer's format and nothing else is consumed.
-        if let Some(start) = text.find("\"concepts\"") {
-            let rest = &text[start..];
-            if let Some(open) = rest.find('{') {
-                let body = &rest[open + 1..];
-                let mut depth = 1usize;
-                let mut current = String::new();
-                let mut entries = Vec::new();
-                for ch in body.chars() {
-                    match ch {
-                        '{' => {
-                            depth += 1;
-                            current.push(ch);
-                        }
-                        '}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                            current.push(ch);
-                        }
-                        _ => current.push(ch),
-                    }
-                    if depth == 1 && current.ends_with(',') {
-                        entries.push(std::mem::take(&mut current));
-                    }
-                }
-                if !current.trim().is_empty() {
-                    entries.push(current);
-                }
-                for entry in entries {
-                    let entry = entry.trim().trim_end_matches(',');
-                    if let Some((key, value)) = entry.split_once(':') {
-                        let key = key.trim().trim_matches('"').to_string();
-                        let value = value.trim().trim_matches('"').to_string();
-                        if key.ends_with(".md") {
-                            concepts.insert(key, value);
-                        }
-                    }
+        // of path to type, read through the engine's one JSON parser
+        // like every other artefact the engine consumes.
+        if let Some(root) = parse(&text)
+            && let Some(entries) = root.get("concepts").and_then(|v| v.as_obj())
+        {
+            for (key, value) in entries {
+                if key.ends_with(".md")
+                    && let Some(recorded) = value.as_str()
+                {
+                    concepts.insert(key.clone(), recorded.to_string());
                 }
             }
         }

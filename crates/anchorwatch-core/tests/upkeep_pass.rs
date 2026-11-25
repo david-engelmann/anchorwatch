@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use anchorwatch_core::auditor::StubAuditor;
 use anchorwatch_core::queue::{
-    INDEX_DRIFT, NO_REVIEW_DATE, PROVENANCE_GAP, REGISTRY_DRIFT, STALE, SUPERSESSION_DEFECT,
-    TYPE_MISSING,
+    INDEX_DRIFT, NO_REVIEW_DATE, PROVENANCE_GAP, QueueState, REGISTRY_DRIFT, STALE,
+    SUPERSESSION_DEFECT, TYPE_MISSING,
 };
 use anchorwatch_core::upkeep::{Mode, run_pass};
 
@@ -381,6 +381,81 @@ fn a_dash_bullet_index_is_a_link_list_not_prose() {
             .iter()
             .any(|item| item.concept == "concepts/index.md" && item.reason == INDEX_DRIFT),
         "the regenerated index no longer drifts"
+    );
+}
+
+#[test]
+fn state_files_carry_paths_with_commas() {
+    // Register R1-02. Two of the narrow text scans the state
+    // readers used before the unification split entries on commas,
+    // so a concept path carrying one silently fell out of the
+    // manifest and the pass state, and the queue reader is unified
+    // with them on the one parser. This fixture runs such a path
+    // through all three readers: the type guard reads it in the
+    // manifest, the tier baseline reads it in the pass state, and
+    // a hand-set waiver on it survives the queue round trip.
+    let dir = std::env::temp_dir().join(format!("anchorwatch-pass-comma-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(
+        &dir,
+        "concepts/a,b.md",
+        "---\ntype: Note\ntitle: \"A B\"\ngenerated:\n  at: \"2026-11-10T00:00:00Z\"\nverified:\n  - by: \"human:ada\"\n    at: \"2026-11-12T00:00:00Z\"\n---\nbody\n",
+    );
+    write_file(
+        &dir,
+        "concepts/stripped,x.md",
+        "# Stripped\n\nNo frontmatter.\n",
+    );
+    write_file(
+        &dir,
+        ".recension/state.json",
+        "{\"concepts\": {\"concepts/a,b.md\": \"Note\", \"concepts/stripped,x.md\": \"Note\"}}",
+    );
+    write_file(
+        &dir,
+        "index.md",
+        "---\nokf_version: \"0.3\"\ntitle: \"Fixture bundle\"\n---\n\n# Fixture bundle\n\n# concepts\n\n* [A B](concepts/a,b.md)\n* [Stripped](concepts/stripped,x.md)\n",
+    );
+    write_file(
+        &dir,
+        "concepts/index.md",
+        "# concepts\n\n* [A B](a,b.md)\n* [Stripped](stripped,x.md)\n",
+    );
+    write_file(&dir, "log.md", "# Bundle Update Log\n");
+    let first = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    assert!(
+        reasons_for(&first, "concepts/stripped,x.md").contains(&TYPE_MISSING.to_string()),
+        "the manifest reader carried the comma path"
+    );
+    // A human waives the comma concept's review-date item.
+    let queue_path = dir.join(".recension").join("queue.json");
+    let queue_text = std::fs::read_to_string(&queue_path).unwrap();
+    let at = queue_text.find("\"concepts/a,b.md\"").unwrap();
+    let state_at = queue_text[at..].find("\"state\": \"open\"").unwrap() + at;
+    let mut queue_text = queue_text;
+    queue_text.replace_range(
+        state_at..state_at + "\"state\": \"open\"".len(),
+        "\"state\": \"waived\"",
+    );
+    std::fs::write(&queue_path, queue_text).unwrap();
+    // The concept is regenerated after its verification.
+    write_file(
+        &dir,
+        "concepts/a,b.md",
+        "---\ntype: Note\ntitle: \"A B\"\ngenerated:\n  at: \"2026-11-20T00:00:00Z\"\nverified:\n  - by: \"human:ada\"\n    at: \"2026-11-12T00:00:00Z\"\n---\nbody, changed\n",
+    );
+    let second = run_pass(&dir, "2026-11-22T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let waived = second
+        .queue
+        .iter()
+        .find(|item| item.concept == "concepts/a,b.md" && item.reason == NO_REVIEW_DATE)
+        .expect("the comma concept's item survives the queue round trip");
+    assert_eq!(waived.state, QueueState::Waived);
+    assert_eq!(waived.first_raised, first.run_id);
+    assert!(
+        reasons_for(&second, "concepts/a,b.md").contains(&"TIER DROP".to_string()),
+        "the pass state reader carried the comma path"
     );
 }
 
