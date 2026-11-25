@@ -198,6 +198,32 @@ fn an_empty_tree_fails_the_honesty_gate() {
 }
 
 #[test]
+fn migrated_directory_indexes_carry_their_directorys_name() {
+    // Register R1-13, closed in Round 17. The migrator headed
+    // every directory index with the fixed word Index while the
+    // upkeep pass heads a regenerated index with the directory's
+    // own name, so a migrated index changed its heading on its
+    // first regeneration for no chosen reason.
+    let source = fixture("headings");
+    let out = std::env::temp_dir().join(format!(
+        "anchorwatch-migrate-headings-out-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&out);
+    run_migration(&ClaudeMemoryProfile, &source, &out, "2026-11-24T00:00:00Z").unwrap();
+    let people = std::fs::read_to_string(out.join("people/index.md")).unwrap();
+    assert!(
+        people.starts_with("# people\n"),
+        "people index heading: {people}"
+    );
+    let curated = std::fs::read_to_string(out.join("curated/index.md")).unwrap();
+    assert!(
+        curated.starts_with("# curated\n"),
+        "curated index heading: {curated}"
+    );
+}
+
+#[test]
 fn an_output_overlapping_the_source_is_refused() {
     // Register R1-07. A migration writes its bundle at the
     // output, and a later run over the same source would ingest
