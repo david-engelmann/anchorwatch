@@ -23,15 +23,22 @@ fn fixture(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("anchorwatch-migrate-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    // The fixture encodes the real tree's shape, with the areas
+    // nested under memory/ and MEMORY.md at the root, because a
+    // fixture in the wrong shape certifies the wrong profile.
     write_file(
         &dir,
-        "people/ada.md",
+        "memory/people/ada.md",
         "---\ndisplay_name: \"Ada Lovelace\"\nsummary: \"First programmer\"\nrank: 1\nfirst_name: \"Ada\"\nlast_name: \"Lovelace\"\nupdated: \"2026-09-01\"\n---\nBody about the analytical engine. This supersedes the earlier note.\n- [ ] ask about the engine\nSee MEMORY.md#L38 for the ruling.\n",
     );
-    write_file(&dir, "people/INDEX.md", "# People\n\nClosest first.\n");
     write_file(
         &dir,
-        "groups/team.md",
+        "memory/people/INDEX.md",
+        "# People\n\nClosest first.\n",
+    );
+    write_file(
+        &dir,
+        "memory/groups/team.md",
         "---\ndisplay_name: \"Team\"\nsummary: \"The group\"\n---\nGroup body.\n",
     );
     write_file(
@@ -125,7 +132,7 @@ fn the_fixture_tree_converts_with_an_honest_ledger() {
     assert!(ada.contains("title: \"Ada Lovelace\""));
     assert!(ada.contains("x-muse-rank: 1"));
     assert!(ada.contains("x-muse-updated: \"2026-09-01\""));
-    assert!(ada.contains("x-anchorwatch-source: \"people/ada.md\""));
+    assert!(ada.contains("x-anchorwatch-source: \"memory/people/ada.md\""));
     assert!(ada.contains("analytical engine"));
     // The bundle furniture is all present.
     assert!(out.join("index.md").exists());
@@ -180,6 +187,37 @@ fn an_empty_tree_fails_the_honesty_gate() {
     assert!(report.entries.is_empty());
     assert!(report.honesty_gate_failed);
     assert!(report.gate_failed);
+}
+
+#[test]
+fn area_profile_and_history_files_become_profile_concepts() {
+    let dir =
+        std::env::temp_dir().join(format!("anchorwatch-migrate-areas-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(
+        &dir,
+        "memory/shopping/PROFILE.md",
+        "# Shopping Profile\n\nSizes and preferences.\n",
+    );
+    write_file(
+        &dir,
+        "memory/travel/HISTORY.md",
+        "# Travel History\n\nPast trips.\n",
+    );
+    let out = dir.join("bundle-out");
+    let report = run_migration(&ClaudeMemoryProfile, &dir, &out, "2026-11-24T00:00:00Z").unwrap();
+    assert_eq!(report.concepts_written, 2);
+    let area = report
+        .entries
+        .iter()
+        .find(|e| e.construct == "area profile and history files")
+        .unwrap();
+    assert_eq!(area.count, 2);
+    let shopping = std::fs::read_to_string(out.join("profile/shopping-profile.md")).unwrap();
+    assert!(shopping.contains("type: \"Profile\""));
+    assert!(shopping.contains("title: \"Shopping Profile\""));
+    assert!(out.join("profile/travel-history.md").exists());
 }
 
 #[test]

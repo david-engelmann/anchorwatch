@@ -661,6 +661,7 @@ impl Profile for ClaudeMemoryProfile {
         let mut bank = 0usize;
         let mut indexes = 0usize;
         let mut unclassified = 0usize;
+        let mut area_files = 0usize;
         let mut supersede_markers = 0usize;
         let mut checkboxes = 0usize;
         let mut citations = 0usize;
@@ -686,14 +687,23 @@ impl Profile for ClaudeMemoryProfile {
             supersede_markers += lowered.matches("supersed").count();
             checkboxes += text.matches("- [ ]").count();
             citations += text.matches(".md#L").count();
-            if parent == "people" || parent == "groups" {
+            // Classification keys on the immediate directory
+            // name, because the real tree nests its areas under
+            // memory/ (memory/people, memory/groups), and the
+            // prototype conversion placed the converted pages at
+            // the bundle's own people and groups directories.
+            let area = rel.rsplit('/').nth(1).unwrap_or("");
+            if area == "people" || area == "groups" {
                 pages += 1;
-                let concept_type = if parent == "people" {
-                    "Person"
-                } else {
-                    "Group"
-                };
-                let (concept, fields) = convert_person(&path, rel, &text, concept_type, as_of);
+                let concept_type = if area == "people" { "Person" } else { "Group" };
+                let (concept, fields) = convert_person(
+                    &path,
+                    rel,
+                    &format!("{area}/{base}"),
+                    &text,
+                    concept_type,
+                    as_of,
+                );
                 extension_fields += fields;
                 concepts.push(concept);
             } else if rel == "MEMORY.md" {
@@ -783,6 +793,25 @@ impl Profile for ClaudeMemoryProfile {
                         }
                     }
                 }
+            } else if rel.starts_with("memory/") && (base == "PROFILE.md" || base == "HISTORY.md") {
+                area_files += 1;
+                let kind = base.trim_end_matches(".md").to_lowercase();
+                let titled = |word: &str| {
+                    let mut chars = word.chars();
+                    match chars.next() {
+                        Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                        None => String::new(),
+                    }
+                };
+                concepts.push(convert_whole(
+                    &path,
+                    rel,
+                    &text,
+                    "Profile",
+                    &format!("profile/{area}-{kind}.md"),
+                    Some(format!("{} {}", titled(area), titled(&kind))),
+                    as_of,
+                ));
             } else {
                 unclassified += 1;
                 concepts.push(convert_whole(&path, rel, &text, "Note", rel, None, as_of));
@@ -871,6 +900,18 @@ impl Profile for ClaudeMemoryProfile {
                 reason: "the source indexes list entries closest first and say so in prose, and OKF index files carry no ordering semantics, so the regenerated indexes list in filename order while rank survives on each concept.".to_string(),
                 load_bearing: false,
                 recovery: "index ordering by x-muse-rank where the key is present".to_string(),
+            },
+        );
+        pair(
+            area_files,
+            LedgerDraft {
+                construct: "area profile and history files".to_string(),
+                count: area_files,
+                disposition: Disposition::Mapped,
+                target: "Profile concepts in the profile directory".to_string(),
+                reason: "the per-area profile and history files the memory system keeps convert whole as Profile concepts, named for their area, as the prototype conversion placed them.".to_string(),
+                load_bearing: false,
+                recovery: "none needed".to_string(),
             },
         );
         pair(
@@ -1026,6 +1067,7 @@ fn quoted(value: &str) -> String {
 fn convert_person(
     path: &Path,
     rel: &str,
+    out_rel: &str,
     text: &str,
     concept_type: &str,
     as_of: &str,
@@ -1074,7 +1116,7 @@ fn convert_person(
     content.push_str(&body);
     (
         ConvertedConcept {
-            relpath: rel.to_string(),
+            relpath: out_rel.to_string(),
             concept_type: concept_type.to_string(),
             title,
             content,
