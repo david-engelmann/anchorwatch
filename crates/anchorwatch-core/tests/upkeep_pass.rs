@@ -139,6 +139,69 @@ fn apply_keeps_the_log_newest_first() {
     assert!(d21 < d20 && d20 < d19, "log groups out of order:\n{log}");
 }
 
+fn repair_fixture(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("anchorwatch-pass-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(
+        &dir,
+        "concepts/keyless.md",
+        "---\ntitle: \"Keyless\"\n---\nbody keyless\n",
+    );
+    write_file(
+        &dir,
+        "concepts/blockless.md",
+        "# Blockless\n\nThis file lost its whole frontmatter block.\n",
+    );
+    write_file(
+        &dir,
+        ".recension/state.json",
+        "{\"concepts\": {\"concepts/keyless.md\": \"Note\", \"concepts/blockless.md\": \"Note\"}}",
+    );
+    write_file(
+        &dir,
+        "index.md",
+        "---\nokf_version: \"0.3\"\ntitle: \"Repair fixture\"\n---\n\n# Repair fixture\n",
+    );
+    write_file(&dir, "log.md", "# Bundle Update Log\n");
+    dir
+}
+
+#[test]
+fn apply_restores_a_stripped_type_key_and_leaves_the_blockless_file() {
+    let dir = repair_fixture("typerepair");
+    let dry = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    assert!(reasons_for(&dry, "concepts/keyless.md").contains(&TYPE_MISSING.to_string()));
+    assert!(reasons_for(&dry, "concepts/blockless.md").contains(&TYPE_MISSING.to_string()));
+    let blockless_before = std::fs::read_to_string(dir.join("concepts/blockless.md")).unwrap();
+
+    let applied = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    assert!(
+        applied
+            .actions
+            .iter()
+            .any(|a| a == "type restored from the manifest: concepts/keyless.md (Note)"),
+        "actions: {:?}",
+        applied.actions
+    );
+    // The item was raised by this pass; it closes on the next one.
+    assert!(reasons_for(&applied, "concepts/keyless.md").contains(&TYPE_MISSING.to_string()));
+    let repaired = std::fs::read_to_string(dir.join("concepts/keyless.md")).unwrap();
+    assert_eq!(
+        repaired,
+        "---\ntype: Note\ntitle: \"Keyless\"\n---\nbody keyless\n"
+    );
+    // A file that lost the whole block is left exactly as found.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("concepts/blockless.md")).unwrap(),
+        blockless_before
+    );
+
+    let second = run_pass(&dir, "2026-11-22T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    assert!(!reasons_for(&second, "concepts/keyless.md").contains(&TYPE_MISSING.to_string()));
+    assert!(reasons_for(&second, "concepts/blockless.md").contains(&TYPE_MISSING.to_string()));
+}
+
 #[test]
 fn a_second_pass_observes_a_tier_drop() {
     let dir = fixture("tierdrop");
