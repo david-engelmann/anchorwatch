@@ -106,6 +106,63 @@ fn a_check_raises_a_defect_and_a_proposal() {
     assert!(!dir.join("state").join("drift-queue.json").exists());
 }
 
+const VIEW: &str = r#"name: sales_view
+tables:
+  - name: orders
+    base_table:
+      database: ANALYTICS
+      schema: PUBLIC
+      table: ORDERS
+    dimensions:
+      - name: channel
+        expr: channel
+        data_type: text
+    facts:
+      - name: amount_fact
+        expr: amount
+        data_type: number
+"#;
+
+const VIEW_LIVE: &str = r#"{
+  "tables": {
+    "ANALYTICS.PUBLIC.ORDERS": {
+      "columns": [
+        {"name": "channel", "type": "TEXT"},
+        {"name": "amount", "type": "TEXT"}
+      ]
+    }
+  }
+}"#;
+
+#[test]
+fn a_snowflake_view_check_raises_type_drift() {
+    let dir = std::env::temp_dir().join(format!(
+        "anchorwatch-drift-snowflake-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(&dir, "definitions.yaml", VIEW);
+    write_file(&dir, "live.json", VIEW_LIVE);
+    let report = run_drift_check(
+        &dir.join("definitions.yaml"),
+        &dir.join("live.json"),
+        &dir.join("state"),
+        "2026-11-24T00:00:00Z",
+        &StubDriftAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
+    assert_eq!(report.definitions_format, "snowflake-semantic-view");
+    assert_eq!(report.references, 2);
+    assert_eq!(report.findings.len(), 1);
+    assert_eq!(report.findings[0].rule_id, "AW-DRF-03");
+    assert_eq!(report.queue.len(), 1);
+    assert_eq!(report.queue[0].concept, "orders.fact.amount_fact");
+    assert_eq!(report.queue[0].reason, DEFINITION_DRIFT);
+    assert_eq!(report.queue[0].priority, 1);
+}
+
 #[test]
 fn two_checks_over_the_same_snapshots_are_byte_identical() {
     let dir = fixture("determinism");

@@ -16,9 +16,10 @@
 //! to a warehouse and never holds a vendor credential. The first
 //! definition shape is the dbt semantic manifest, plain JSON in
 //! git, first in the grading programme's gradeability order. The
-//! live side is a JSON column listing in the shape this module
-//! documents, whatever tool exported it. The Snowflake semantic
-//! view YAML shape is the second input and is not yet read.
+//! second is the Snowflake semantic view YAML, which also declares
+//! a type per element, making type drift checkable where the dbt
+//! shape declares none. The live side is a JSON column listing in
+//! the shape this module documents, whatever tool exported it.
 //!
 //! Until the real auditor publishes its drift interface, checks run
 //! against [`StubDriftAuditor`], which implements the comparison in
@@ -54,6 +55,10 @@ pub struct ColumnRef {
     pub relation: String,
     /// The referenced column name.
     pub column: String,
+    /// The type the definition declares for the column, when the
+    /// definition shape carries one. The dbt manifest does not;
+    /// the Snowflake semantic view does.
+    pub declared_type: Option<String>,
 }
 
 /// A parsed definition snapshot.
@@ -145,7 +150,25 @@ impl DriftAuditor for StubDriftAuditor {
                 });
                 continue;
             };
-            if table.contains_key(&reference.column) {
+            if let Some(live_type) = table.get(&reference.column) {
+                if let Some(declared) = &reference.declared_type
+                    && !live_type.is_empty()
+                    && type_family(declared) != type_family(live_type)
+                {
+                    let mut evidence = base_evidence;
+                    evidence.push(("declared_type".to_string(), declared.clone()));
+                    evidence.push(("live_type".to_string(), live_type.clone()));
+                    evidence.push((
+                        "observation".to_string(),
+                        "declared type family differs from live type family".to_string(),
+                    ));
+                    findings.push(DriftFinding {
+                        rule_id: "AW-DRF-03".to_string(),
+                        severity: Severity::Error,
+                        artifact: reference.artifact.clone(),
+                        evidence,
+                    });
+                }
                 continue;
             }
             let wanted = normalize(&reference.column);
@@ -191,6 +214,35 @@ impl DriftAuditor for StubDriftAuditor {
                 .then_with(|| a.artifact.cmp(&b.artifact))
         });
         findings
+    }
+}
+
+/// The type family a declared or live type belongs to, for the
+/// type-drift comparison. Vendor spellings differ, so known
+/// spellings fold into families; an unlisted spelling is its own
+/// family and matches only itself. The real auditor's type model
+/// replaces this table when its interface lands.
+fn type_family(declared: &str) -> String {
+    let base = declared
+        .split('(')
+        .next()
+        .unwrap_or(declared)
+        .trim()
+        .to_lowercase();
+    match base.as_str() {
+        "text" | "varchar" | "char" | "character" | "string" | "nvarchar" | "nchar" => {
+            "text".to_string()
+        }
+        "number" | "numeric" | "decimal" | "dec" | "int" | "integer" | "bigint" | "smallint"
+        | "tinyint" | "float" | "double" | "double precision" | "real" => "number".to_string(),
+        "boolean" | "bool" => "boolean".to_string(),
+        "date" => "date".to_string(),
+        "timestamp" | "timestamp_ntz" | "timestamp_ltz" | "timestamp_tz" | "datetime" => {
+            "timestamp".to_string()
+        }
+        "time" => "time".to_string(),
+        "binary" | "varbinary" | "blob" => "binary".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -264,6 +316,7 @@ pub fn load_dbt_manifest(text: &str, source: &str, hash: String) -> Result<Defin
                     kind: kind.to_string(),
                     relation: relation.clone(),
                     column: column.to_string(),
+                    declared_type: None,
                 });
             }
         }
@@ -311,6 +364,300 @@ pub fn load_live_schema(text: &str, source: &str, hash: String) -> Result<LiveSc
         source: source.to_string(),
         hash,
         tables: out,
+    })
+}
+
+/// A node in the narrow YAML reader. Only the block shapes a
+/// machine-exported semantic view uses are represented, mappings,
+/// lists, and scalar values. Flow collections and block scalars
+/// are not read; a file using them fails to parse whole rather
+/// than being read approximately.
+enum Yaml {
+    Scalar(String),
+    List(Vec<Yaml>),
+    Map(Vec<(String, Yaml)>),
+}
+
+impl Yaml {
+    fn get(&self, key: &str) -> Option<&Yaml> {
+        match self {
+            Yaml::Map(pairs) => pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+            _ => None,
+        }
+    }
+
+    fn as_scalar(&self) -> Option<&str> {
+        match self {
+            Yaml::Scalar(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    fn as_list(&self) -> Option<&[Yaml]> {
+        match self {
+            Yaml::List(items) => Some(items),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct YamlLine {
+    indent: usize,
+    text: String,
+}
+
+/// Splits YAML text into content lines with comments removed and
+/// indentation measured. A tab in the indentation makes the file
+/// unreadable to this reader, and the empty result says so.
+fn yaml_lines(text: &str) -> Vec<YamlLine> {
+    let mut out = Vec::new();
+    for raw in text.lines() {
+        let line = strip_yaml_comment(raw);
+        if line.trim().is_empty() {
+            continue;
+        }
+        let indent = line.len() - line.trim_start_matches(' ').len();
+        if line[indent..].starts_with('\t') {
+            return Vec::new();
+        }
+        out.push(YamlLine {
+            indent,
+            text: line[indent..].trim_end().to_string(),
+        });
+    }
+    out
+}
+
+fn strip_yaml_comment(line: &str) -> String {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut prev = ' ';
+    for (i, ch) in line.char_indices() {
+        match ch {
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            '#' if !in_single && !in_double && prev.is_whitespace() => {
+                return line[..i].trim_end().to_string();
+            }
+            _ => {}
+        }
+        prev = ch;
+    }
+    line.to_string()
+}
+
+fn yaml_is_map_line(text: &str) -> bool {
+    match text.find(':') {
+        Some(idx) => idx + 1 == text.len() || text[idx + 1..].starts_with(' '),
+        None => false,
+    }
+}
+
+fn yaml_split_key(text: &str) -> Option<(String, String)> {
+    let idx = text.find(':')?;
+    if idx + 1 < text.len() && !text[idx + 1..].starts_with(' ') {
+        return None;
+    }
+    let key = unquote_yaml(text[..idx].trim());
+    let value = if idx + 1 < text.len() {
+        text[idx + 1..].trim().to_string()
+    } else {
+        String::new()
+    };
+    Some((key, value))
+}
+
+fn unquote_yaml(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        trimmed[1..trimmed.len() - 1]
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
+    } else if trimmed.len() >= 2 && trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        trimmed[1..trimmed.len() - 1].replace("''", "'")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Parses the block starting at `start`, whose lines sit at
+/// `indent`. Returns the node and the first unconsumed line index.
+fn yaml_block(lines: &[YamlLine], start: usize, indent: usize) -> Option<(Yaml, usize)> {
+    let first = lines.get(start)?;
+    if first.indent != indent {
+        return None;
+    }
+    if first.text == "-" || first.text.starts_with("- ") {
+        let mut items = Vec::new();
+        let mut i = start;
+        while i < lines.len()
+            && lines[i].indent == indent
+            && (lines[i].text == "-" || lines[i].text.starts_with("- "))
+        {
+            let rest = lines[i].text[1..].trim_start().to_string();
+            if rest.is_empty() {
+                let next_indent = lines.get(i + 1).map(|l| l.indent)?;
+                if next_indent <= indent {
+                    return None;
+                }
+                let (value, next) = yaml_block(lines, i + 1, next_indent)?;
+                items.push(value);
+                i = next;
+            } else {
+                let mut sub = vec![YamlLine {
+                    indent: indent + 2,
+                    text: rest,
+                }];
+                let mut j = i + 1;
+                while j < lines.len() && lines[j].indent > indent {
+                    sub.push(lines[j].clone());
+                    j += 1;
+                }
+                let (value, used) = yaml_block(&sub, 0, indent + 2)?;
+                if used != sub.len() {
+                    return None;
+                }
+                items.push(value);
+                i = j;
+            }
+        }
+        return Some((Yaml::List(items), i));
+    }
+    if yaml_is_map_line(&first.text) {
+        let mut pairs = Vec::new();
+        let mut i = start;
+        while i < lines.len() && lines[i].indent == indent && yaml_is_map_line(&lines[i].text) {
+            let (key, raw_value) = yaml_split_key(&lines[i].text)?;
+            if raw_value.is_empty() {
+                match lines.get(i + 1) {
+                    Some(next)
+                        if next.indent == indent
+                            && (next.text == "-" || next.text.starts_with("- ")) =>
+                    {
+                        let (value, after) = yaml_block(lines, i + 1, indent)?;
+                        pairs.push((key, value));
+                        i = after;
+                    }
+                    Some(next) if next.indent > indent => {
+                        let (value, after) = yaml_block(lines, i + 1, next.indent)?;
+                        pairs.push((key, value));
+                        i = after;
+                    }
+                    _ => {
+                        pairs.push((key, Yaml::Scalar(String::new())));
+                        i += 1;
+                    }
+                }
+            } else {
+                pairs.push((key, Yaml::Scalar(unquote_yaml(&raw_value))));
+                i += 1;
+            }
+        }
+        return Some((Yaml::Map(pairs), i));
+    }
+    Some((Yaml::Scalar(unquote_yaml(&first.text)), start + 1))
+}
+
+/// Parses YAML text with the narrow reader. Returns None when the
+/// text uses shapes the reader does not cover.
+fn parse_yaml(text: &str) -> Option<Yaml> {
+    let lines = yaml_lines(text);
+    if lines.is_empty() {
+        return None;
+    }
+    let (value, next) = yaml_block(&lines, 0, lines[0].indent)?;
+    if next != lines.len() {
+        return None;
+    }
+    Some(value)
+}
+
+/// The column an element expression references, the segment after
+/// the last dot when it is a plain identifier. A computed
+/// expression is not a reference this reader checks.
+fn expr_column(expr: &str) -> Option<String> {
+    let last = expr.rsplit('.').next()?.trim();
+    if is_plain_identifier(last) {
+        Some(last.to_string())
+    } else {
+        None
+    }
+}
+
+/// Loads a Snowflake semantic view YAML export as a definition
+/// snapshot, the shape the platform's own read function for
+/// semantic views produces. Each table's facts, dimensions, and
+/// time dimensions reference columns of the table's base relation
+/// and declare a type. Metrics compose facts rather than naming
+/// columns, so they are not references.
+pub fn load_snowflake_view(text: &str, source: &str, hash: String) -> Result<Definitions, String> {
+    let root = parse_yaml(text)
+        .ok_or_else(|| format!("definitions do not parse as semantic view YAML: {source}"))?;
+    let tables = root
+        .get("tables")
+        .and_then(|v| v.as_list())
+        .ok_or_else(|| format!("no tables list in {source}"))?;
+    let mut references = Vec::new();
+    for table in tables {
+        let Some(table_name) = table.get("name").and_then(|v| v.as_scalar()) else {
+            continue;
+        };
+        let relation = match table.get("base_table") {
+            Some(base) => {
+                let parts: Vec<&str> = ["database", "schema", "table"]
+                    .iter()
+                    .filter_map(|key| base.get(key).and_then(|v| v.as_scalar()))
+                    .filter(|part| !part.is_empty())
+                    .collect();
+                if parts.is_empty() {
+                    table_name.to_string()
+                } else {
+                    normalize_relation(&parts.join("."))
+                }
+            }
+            None => table_name.to_string(),
+        };
+        for (key, kind) in [
+            ("facts", "fact"),
+            ("dimensions", "dimension"),
+            ("time_dimensions", "time_dimension"),
+        ] {
+            let Some(elements) = table.get(key).and_then(|v| v.as_list()) else {
+                continue;
+            };
+            for element in elements {
+                let Some(name) = element.get("name").and_then(|v| v.as_scalar()) else {
+                    continue;
+                };
+                let Some(expr) = element.get("expr").and_then(|v| v.as_scalar()) else {
+                    continue;
+                };
+                let Some(column) = expr_column(expr) else {
+                    continue;
+                };
+                let declared_type = element
+                    .get("data_type")
+                    .and_then(|v| v.as_scalar())
+                    .map(|t| t.to_lowercase());
+                references.push(ColumnRef {
+                    artifact: format!("{table_name}.{kind}.{name}"),
+                    model: table_name.to_string(),
+                    kind: kind.to_string(),
+                    relation: relation.clone(),
+                    column,
+                    declared_type,
+                });
+            }
+        }
+    }
+    references.sort_by(|a, b| a.artifact.cmp(&b.artifact));
+    Ok(Definitions {
+        format: "snowflake-semantic-view".to_string(),
+        source: source.to_string(),
+        hash,
+        models: tables.len(),
+        references,
     })
 }
 
@@ -498,7 +845,12 @@ pub fn run_drift_check(
         .map_err(|_| format!("definitions are not UTF-8: {definitions_label}"))?;
     let live_text = String::from_utf8(live_bytes)
         .map_err(|_| format!("live schema is not UTF-8: {live_label}"))?;
-    let definitions = load_dbt_manifest(&definitions_text, &definitions_label, definitions_hash)?;
+    let definitions = match definitions_path.extension().and_then(|e| e.to_str()) {
+        Some("yaml") | Some("yml") => {
+            load_snowflake_view(&definitions_text, &definitions_label, definitions_hash)?
+        }
+        _ => load_dbt_manifest(&definitions_text, &definitions_label, definitions_hash)?,
+    };
     let live = load_live_schema(&live_text, &live_label, live_hash)?;
     let run_id = format!(
         "run-{}",
@@ -633,7 +985,9 @@ fn write_drift_state(state_dir: &Path, report: &DriftReport) -> Result<(), Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{DriftAuditor, StubDriftAuditor, load_dbt_manifest, load_live_schema};
+    use super::{
+        DriftAuditor, StubDriftAuditor, load_dbt_manifest, load_live_schema, load_snowflake_view,
+    };
 
     const MANIFEST: &str = r#"{
       "semantic_models": [
@@ -693,6 +1047,77 @@ mod tests {
         let findings = StubDriftAuditor.audit(&definitions, &live);
         assert_eq!(findings.len(), 4);
         assert!(findings.iter().all(|f| f.rule_id == "AW-DRF-01"));
+    }
+
+    const VIEW: &str = r#"name: sales_view
+tables:
+  - name: orders
+    base_table:
+      database: ANALYTICS
+      schema: PUBLIC
+      table: ORDERS
+    dimensions:
+      - name: channel
+        expr: channel
+        data_type: text
+    time_dimensions:
+      - name: ordered_on
+        expr: order_date
+        data_type: date
+    facts:
+      - name: amount_fact
+        expr: amount
+        data_type: number
+    metrics:
+      - name: revenue
+        expr: SUM(amount_fact)
+"#;
+
+    const VIEW_LIVE: &str = r#"{
+      "tables": {
+        "ANALYTICS.PUBLIC.ORDERS": {
+          "columns": [
+            {"name": "channel", "type": "TEXT"},
+            {"name": "orderdate", "type": "DATE"},
+            {"name": "amount", "type": "TEXT"}
+          ]
+        }
+      }
+    }"#;
+
+    #[test]
+    fn the_snowflake_view_yields_typed_references_and_type_drift() {
+        let definitions = load_snowflake_view(VIEW, "view.yaml", "d".to_string()).unwrap();
+        assert_eq!(definitions.format, "snowflake-semantic-view");
+        assert_eq!(definitions.models, 1);
+        // The metric composes a fact and is not a reference.
+        assert_eq!(definitions.references.len(), 3);
+        let fact = definitions
+            .references
+            .iter()
+            .find(|r| r.artifact == "orders.fact.amount_fact")
+            .unwrap();
+        assert_eq!(fact.relation, "ANALYTICS.PUBLIC.ORDERS");
+        assert_eq!(fact.declared_type.as_deref(), Some("number"));
+        let live = load_live_schema(VIEW_LIVE, "live.json", "l".to_string()).unwrap();
+        let findings = StubDriftAuditor.audit(&definitions, &live);
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].rule_id, "AW-DRF-02");
+        assert_eq!(findings[0].artifact, "orders.time_dimension.ordered_on");
+        assert_eq!(findings[1].rule_id, "AW-DRF-03");
+        assert_eq!(findings[1].artifact, "orders.fact.amount_fact");
+        assert!(
+            findings[1]
+                .evidence
+                .iter()
+                .any(|(k, v)| k == "live_type" && v == "TEXT")
+        );
+    }
+
+    #[test]
+    fn tab_indented_yaml_is_refused_whole() {
+        let bad = "tables:\n\t- name: orders\n";
+        assert!(load_snowflake_view(bad, "view.yaml", "d".to_string()).is_err());
     }
 
     #[test]
