@@ -55,7 +55,19 @@ fn parse_date(value: &str) -> Option<(i64, u32, u32)> {
     let y: i64 = parts.next()?.parse().ok()?;
     let m: u32 = parts.next()?.parse().ok()?;
     let d: u32 = parts.next()?.parse().ok()?;
-    if parts.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+    if parts.next().is_some() || !(1..=12).contains(&m) {
+        return None;
+    }
+    // The day must exist in its month, leap years counted, so a
+    // date like the thirty first of February reads as malformed
+    // rather than rolling over into March.
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let month_days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut limit = month_days[(m - 1) as usize];
+    if m == 2 && leap {
+        limit = 29;
+    }
+    if d == 0 || d > limit {
         return None;
     }
     Some((y, m, d))
@@ -103,5 +115,18 @@ mod tests {
         assert_eq!(parse_timestamp("2026-13-01"), None);
         assert_eq!(parse_timestamp("2026-11-21 10:00:00"), None);
         assert_eq!(parse_timestamp(""), None);
+    }
+
+    #[test]
+    fn days_that_do_not_exist_do_not_parse() {
+        assert_eq!(parse_timestamp("2026-02-31"), None);
+        assert_eq!(parse_timestamp("2026-02-29"), None);
+        assert_eq!(parse_timestamp("2026-04-31"), None);
+        assert_eq!(parse_timestamp("2026-01-00"), None);
+        assert_eq!(parse_timestamp("2026-02-31T00:00:00Z"), None);
+        assert!(parse_timestamp("2024-02-29").is_some());
+        assert!(parse_timestamp("2000-02-29").is_some());
+        assert_eq!(parse_timestamp("1900-02-29"), None);
+        assert!(parse_timestamp("2026-01-31").is_some());
     }
 }
