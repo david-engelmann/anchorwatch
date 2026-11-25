@@ -190,6 +190,30 @@ fn an_empty_tree_fails_the_honesty_gate() {
 }
 
 #[test]
+fn a_heading_inside_a_code_fence_does_not_split_a_section() {
+    // Register R1-06. Section splitting used to break on any
+    // heading-shaped line, including one inside a fenced code
+    // sample, which cut the section in two and minted a concept
+    // out of the sample's contents.
+    let dir =
+        std::env::temp_dir().join(format!("anchorwatch-migrate-fence-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(
+        &dir,
+        "MEMORY.md",
+        "# Curated Memory\n\n## Code sample\n\nText.\n\n```\n## Not a heading\nmore code\n```\n\nAfter.\n",
+    );
+    let out = dir.join("bundle-out");
+    let report = run_migration(&ClaudeMemoryProfile, &dir, &out, "2026-11-24T00:00:00Z").unwrap();
+    assert_eq!(report.concepts_written, 2);
+    let section = std::fs::read_to_string(out.join("curated/01-code-sample.md")).unwrap();
+    assert!(section.contains("## Not a heading"));
+    assert!(section.contains("After."));
+    assert!(!out.join("curated/02-not-a-heading.md").exists());
+}
+
+#[test]
 fn area_profile_and_history_files_become_profile_concepts() {
     let dir =
         std::env::temp_dir().join(format!("anchorwatch-migrate-areas-{}", std::process::id()));
