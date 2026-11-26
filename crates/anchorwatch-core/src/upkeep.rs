@@ -427,7 +427,7 @@ pub fn run_pass(
     let (registry_search, near_misses) = find_claim_registry(root);
     for relpath in &near_misses {
         notes.push(format!(
-            "a file carries a claims array whose entries do not all name an id and a concept, and was not checked as a registry: {relpath}"
+            "a file carries a claims array whose entries do not all fit the registry entry shape, and was not checked as a registry: {relpath}"
         ));
     }
     match registry_search {
@@ -654,15 +654,25 @@ fn find_claim_registry(root: &Path) -> (RegistrySearch, Vec<String>) {
                 break;
             };
             let mut supersedes = Vec::new();
-            if let Some(Parsed::Arr(targets)) = fields.get("supersedes") {
-                for target in targets {
-                    let Parsed::Str(target) = target else {
-                        shape_holds = false;
+            match fields.get("supersedes") {
+                None => {}
+                Some(Parsed::Arr(targets)) => {
+                    for target in targets {
+                        let Parsed::Str(target) = target else {
+                            shape_holds = false;
+                            break;
+                        };
+                        supersedes.push(target.clone());
+                    }
+                    if !shape_holds {
                         break;
-                    };
-                    supersedes.push(target.clone());
+                    }
                 }
-                if !shape_holds {
+                // A supersedes present in any other shape fails
+                // the entry shape like every other malformation,
+                // rather than dropping the claim's edges silently.
+                Some(_) => {
+                    shape_holds = false;
                     break;
                 }
             }

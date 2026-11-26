@@ -411,6 +411,52 @@ fn a_near_miss_registry_is_named_not_passed_over() {
 }
 
 #[test]
+fn a_registry_with_a_bare_string_supersedes_is_a_near_miss() {
+    // The fifteenth register's repair. A supersedes field
+    // present but not an array was the one entry-shape failure
+    // the discovery passed over in silence, the claim loading
+    // with its edges dropped and its edge check never run, so a
+    // registry malformed in exactly that way read as clean. It
+    // now fails the shape like every other malformation.
+    let dir = fixture("registry-bare-supersedes");
+    write_file(
+        &dir,
+        "claims.json",
+        "{\"claims\": [{\"id\": \"claim-1\", \"concept\": \"concepts/a.md\", \"supersedes\": \"claim-0\"}]}",
+    );
+    let report = run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor::default(),
+        Mode::DryRun,
+    )
+    .unwrap();
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|n| n.contains("was not checked as a registry: claims.json")),
+        "notes: {:?}",
+        report.notes
+    );
+    assert!(
+        !report
+            .notes
+            .iter()
+            .any(|n| n.starts_with("claim registry checked")),
+        "notes: {:?}",
+        report.notes
+    );
+    assert!(
+        !report
+            .queue
+            .iter()
+            .any(|item| item.reason == REGISTRY_DRIFT),
+        "a near miss is reported, never checked"
+    );
+}
+
+#[test]
 fn two_claim_registries_are_reported_not_guessed() {
     let dir = fixture("registry-ambiguous");
     let registry = "{\"claims\": [{\"id\": \"claim-1\", \"concept\": \"concepts/a.md\"}]}";
