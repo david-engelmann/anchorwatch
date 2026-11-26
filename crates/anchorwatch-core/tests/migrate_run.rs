@@ -399,3 +399,32 @@ fn the_migrated_bundle_stands_up_under_an_upkeep_pass() {
             .all(|item| item.reason == NO_REVIEW_DATE)
     );
 }
+
+#[test]
+fn single_quoted_person_fields_convert_without_their_quotes() {
+    // The twelfth register's parity item. Every other reader in
+    // the codebase strips one pair of surrounding quotes of
+    // either kind; the memory profile's own splitter stripped
+    // double quotes only, so a single-quoted summary carried its
+    // quotes into the emitted description and a single-quoted
+    // rank was written raw with its quotes still on it.
+    let dir = fixture("single-quotes");
+    write_file(
+        &dir,
+        "memory/people/grace.md",
+        "---\ndisplay_name: 'Grace Hopper'\nsummary: 'Compiler pioneer'\nrank: '3'\n---\nBody about compilers.\n",
+    );
+    let out = std::env::temp_dir().join(format!(
+        "anchorwatch-migrate-single-quotes-out-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&out);
+    run_migration(&ClaudeMemoryProfile, &dir, &out, "2026-11-24T00:00:00Z").unwrap();
+    let grace = std::fs::read_to_string(out.join("people/grace.md")).unwrap();
+    assert!(
+        grace.contains("description: \"Compiler pioneer\""),
+        "converted page: {grace}"
+    );
+    assert!(grace.contains("x-muse-rank: 3"), "converted page: {grace}");
+    assert!(!grace.contains("'3'"), "converted page: {grace}");
+}
