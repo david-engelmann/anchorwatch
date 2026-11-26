@@ -267,6 +267,17 @@ pub fn run_pass(
             ));
         }
     }
+    // A frontmatter block that never closes is read as written,
+    // its fields standing, and named here so the defect is
+    // visible rather than absorbed into the readings it fed.
+    for concept in bundle.concepts() {
+        if concept.frontmatter.block_unclosed {
+            notes.push(format!(
+                "the frontmatter block of {} never closes; its fields were read as written",
+                concept.relpath
+            ));
+        }
+    }
 
     // Previous state: tiers and current-event counts from the last
     // pass, and the queue as it stood. Absence means a first pass,
