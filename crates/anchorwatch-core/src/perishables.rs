@@ -122,6 +122,25 @@ impl Auditor for PerishablesAuditor {
             raw_findings.extend(perishables::execute::findings_from_reports(&reports));
         }
 
+        let mut coverage = vec![
+            ("currency".to_string(), true),
+            ("supersession".to_string(), true),
+            ("freshness".to_string(), true),
+            ("provenance".to_string(), true),
+        ];
+        // Attestation is this adapter's own optional path, not
+        // one of the contract's four calls. Where it did not run
+        // and the bundle carries a claimed result it would have
+        // judged, the coverage says so, so the pass names the
+        // unrun derivation instead of letting a clean report
+        // imply it ran. Where it ran, or where no claimed result
+        // stands to be misread, no entry appears.
+        if !self.execute_attestations
+            && p_bundle.concepts.iter().any(|c| c.claimed_result.is_some())
+        {
+            coverage.push(("attestation".to_string(), false));
+        }
+
         let mut currency = Vec::new();
         let mut provenance = Vec::new();
         for concept in &p_bundle.concepts {
@@ -177,12 +196,7 @@ impl Auditor for PerishablesAuditor {
             currency,
             provenance,
             findings,
-            coverage: vec![
-                ("currency".to_string(), true),
-                ("supersession".to_string(), true),
-                ("freshness".to_string(), true),
-                ("provenance".to_string(), true),
-            ],
+            coverage,
         }
     }
 }
