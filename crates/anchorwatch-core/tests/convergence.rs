@@ -306,6 +306,43 @@ fn a_mismatched_attestation_raises_nothing_by_default() {
 }
 
 #[test]
+fn an_unrun_attestation_is_named_in_the_notes() {
+    // The twenty-first register's repair. Under the default
+    // auditor a bundle carrying a claimed result drew no
+    // attestation finding and said nothing about the unrun
+    // derivation, so its clean report read as if the claims had
+    // been judged. The pass now names the unrun call, as it
+    // names any uncovered call, and stays silent where the
+    // attestation ran or no claim stands.
+    let dir = bundle("attest-named", &[("a.md", &computation_concept("4"))]);
+    let report = pass(&dir);
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note == "auditor call not covered by the perishables auditor: attestation"),
+        "notes: {:?}",
+        report.notes
+    );
+    assert!(!any_defect(&report, "a.md"));
+    let report = pass_attesting(&dir);
+    assert!(
+        !report.notes.iter().any(|note| note.contains("attestation")),
+        "notes: {:?}",
+        report.notes
+    );
+    assert_eq!(priorities(&report, "a.md", ATTESTATION_DEFECT), vec![1]);
+    // A bundle with no claimed result draws no such note.
+    let dir = bundle("attest-absent", &[("a.md", &concept(""))]);
+    let report = pass(&dir);
+    assert!(
+        !report.notes.iter().any(|note| note.contains("attestation")),
+        "notes: {:?}",
+        report.notes
+    );
+}
+
+#[test]
 fn a_matching_attestation_raises_nothing_when_asked() {
     let dir = bundle("attest-match", &[("a.md", &computation_concept("3"))]);
     let report = pass_attesting(&dir);
