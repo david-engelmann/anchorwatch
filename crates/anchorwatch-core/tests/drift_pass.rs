@@ -163,6 +163,66 @@ fn a_snowflake_view_check_raises_type_drift() {
     assert_eq!(report.queue[0].priority, 1);
 }
 
+const VIEW_LONG_SPELLINGS: &str = r#"name: sales_view
+tables:
+  - name: orders
+    base_table:
+      database: ANALYTICS
+      schema: PUBLIC
+      table: ORDERS
+    dimensions:
+      - name: channel
+        expr: channel
+        data_type: character varying
+    facts:
+      - name: amount_fact
+        expr: amount
+        data_type: int8
+    time_dimensions:
+      - name: ordered_on
+        expr: ordered_on
+        data_type: timestamp with time zone
+"#;
+
+const VIEW_LONG_SPELLINGS_LIVE: &str = r#"{
+  "tables": {
+    "ANALYTICS.PUBLIC.ORDERS": {
+      "columns": [
+        {"name": "channel", "type": "TEXT"},
+        {"name": "amount", "type": "BIGINT"},
+        {"name": "ordered_on", "type": "TIMESTAMP_TZ"}
+      ]
+    }
+  }
+}"#;
+
+#[test]
+fn long_type_spellings_fold_to_their_families() {
+    // Register R1-10. A type spelled long on the definition side
+    // and short on the live side is the same type, and the check
+    // must not fire its mismatch finding on the spelling alone.
+    let dir = std::env::temp_dir().join(format!(
+        "anchorwatch-drift-spellings-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(&dir, "definitions.yaml", VIEW_LONG_SPELLINGS);
+    write_file(&dir, "live.json", VIEW_LONG_SPELLINGS_LIVE);
+    let report = run_drift_check(
+        &dir.join("definitions.yaml"),
+        &dir.join("live.json"),
+        &dir.join("state"),
+        "2026-11-24T00:00:00Z",
+        &StubDriftAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
+    assert_eq!(report.references, 3);
+    assert_eq!(report.findings.len(), 0);
+    assert_eq!(report.queue.len(), 0);
+}
+
 const METRIC_VIEW: &str = r#"version: 1.1
 source: main.sales.orders
 fields:

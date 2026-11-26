@@ -234,16 +234,21 @@ fn type_family(declared: &str) -> String {
         .trim()
         .to_lowercase();
     match base.as_str() {
-        "text" | "varchar" | "char" | "character" | "string" | "nvarchar" | "nchar" => {
-            "text".to_string()
-        }
+        "text" | "varchar" | "char" | "character" | "character varying" | "string" | "nvarchar"
+        | "nchar" => "text".to_string(),
         "number" | "numeric" | "decimal" | "dec" | "int" | "integer" | "bigint" | "smallint"
-        | "tinyint" | "float" | "double" | "double precision" | "real" => "number".to_string(),
+        | "tinyint" | "int2" | "int4" | "int8" | "float" | "float4" | "float8" | "double"
+        | "double precision" | "real" => "number".to_string(),
         "boolean" | "bool" => "boolean".to_string(),
         "date" => "date".to_string(),
-        "timestamp" | "timestamp_ntz" | "timestamp_ltz" | "timestamp_tz" | "datetime" => {
-            "timestamp".to_string()
-        }
+        "timestamp"
+        | "timestamp_ntz"
+        | "timestamp_ltz"
+        | "timestamp_tz"
+        | "timestamptz"
+        | "timestamp with time zone"
+        | "timestamp without time zone"
+        | "datetime" => "timestamp".to_string(),
         "time" => "time".to_string(),
         "binary" | "varbinary" | "blob" => "binary".to_string(),
         other => other.to_string(),

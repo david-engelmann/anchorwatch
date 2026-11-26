@@ -600,6 +600,56 @@ fn state_files_carry_paths_with_commas() {
 }
 
 #[test]
+fn an_unclosed_frontmatter_block_is_named_in_the_notes() {
+    // Register R2-06, in the narrowed form the convergence left:
+    // a block that never closes is read as written, its type and
+    // review date standing, and the pass names the defect in its
+    // notes rather than absorbing it silently.
+    let dir =
+        std::env::temp_dir().join(format!("anchorwatch-pass-unclosed-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(
+        &dir,
+        "concepts/a.md",
+        "---\ntype: Note\ntitle: \"A\"\nstale_after: 2027-01-01\nbody without a closing marker\n",
+    );
+    write_file(
+        &dir,
+        "index.md",
+        "---\nokf_version: \"0.3\"\ntitle: \"Fixture bundle\"\n---\n\n# Fixture bundle\n\n# concepts\n\n* [A](concepts/a.md)\n",
+    );
+    write_file(&dir, "concepts/index.md", "# concepts\n\n* [A](a.md)\n");
+    write_file(&dir, "log.md", "# Bundle Update Log\n");
+    let report = run_pass(
+        &dir,
+        "2026-11-24T00:00:00Z",
+        &PerishablesAuditor::default(),
+        Mode::DryRun,
+    )
+    .unwrap();
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.contains("concepts/a.md") && note.contains("never closes")),
+        "notes: {:?}",
+        report.notes
+    );
+    // The readings stand: the type was read, so no TYPE MISSING,
+    // and the review date was read, so no NO REVIEW DATE.
+    assert!(
+        !report
+            .queue
+            .iter()
+            .any(|item| item.concept == "concepts/a.md"
+                && (item.reason == TYPE_MISSING || item.reason == NO_REVIEW_DATE)),
+        "queue: {:?}",
+        report.queue
+    );
+}
+
+#[test]
 fn a_review_date_that_does_not_exist_is_malformed_not_stale() {
     // Register R1-03. Before the calendar check, the thirty first
     // of February parsed as a March instant, so the freshness

@@ -53,6 +53,11 @@ pub struct Frontmatter {
     pub has_sources: bool,
     /// The parsed `sources` entries, in file order.
     pub sources: Vec<SourceEntry>,
+    /// Whether the frontmatter block opened but never closed, so
+    /// the fields above were read from a block that runs to the
+    /// end of the file. The readings stand as written; the flag
+    /// exists so a pass can name the defect instead of hiding it.
+    pub block_unclosed: bool,
 }
 
 /// Splits a document into its parsed frontmatter and whether a
@@ -194,6 +199,7 @@ pub fn parse_document(text: &str) -> (Frontmatter, bool) {
     }
     flush_event(&mut fm, &mut pending_event);
     flush_source(&mut fm, &mut pending_source);
+    fm.block_unclosed = true;
     (fm, true)
 }
 
