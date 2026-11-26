@@ -138,11 +138,13 @@ impl PassReport {
         let mut out = String::new();
         out.push_str(&format!("# Upkeep pass {}\n\n", self.run_id));
         out.push_str(&format!(
-            "As of {}. Mode {}. Bundle snapshot {}. {} concepts.\n\n",
+            "As of {}. Mode {}. Bundle snapshot {}. {} concepts. Auditor {} (schema {}).\n\n",
             self.as_of,
             self.mode.as_str(),
             &self.snapshot_hash[..12],
-            self.concept_count
+            self.concept_count,
+            self.auditor_report.auditor,
+            self.auditor_report.schema_version
         ));
         out.push_str(&format!(
             "Queue: {} items, {} raised by this pass, {} closed on evidence.\n\n",
@@ -179,6 +181,10 @@ impl PassReport {
                 finding.concept,
                 finding.severity.as_str()
             ));
+        }
+        out.push_str("\n## Actions\n\n");
+        for action in &self.actions {
+            out.push_str(&format!("- {action}\n"));
         }
         out.push_str("\n## Notes\n\n");
         for note in &self.notes {

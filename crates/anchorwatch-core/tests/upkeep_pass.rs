@@ -600,6 +600,45 @@ fn state_files_carry_paths_with_commas() {
 }
 
 #[test]
+fn the_markdown_report_names_its_auditor_and_lists_its_actions() {
+    // The thirteenth register's repair. The human form of the
+    // report listed findings without naming the auditor that
+    // produced them and omitted the pass's own actions entirely,
+    // so an applying pass's writes were invisible in the form a
+    // human reviews. Both now stand in the Markdown as they
+    // stand in the JSON.
+    let dir = fixture("markdown-report");
+    let dry = run_pass(
+        &dir,
+        "2026-11-24T00:00:00Z",
+        &PerishablesAuditor::default(),
+        Mode::DryRun,
+    )
+    .unwrap();
+    let markdown = dry.to_markdown();
+    assert!(
+        markdown.contains("Auditor perishables (schema 2)"),
+        "markdown: {markdown}"
+    );
+    assert!(
+        markdown.contains("- dry-run: no files written"),
+        "markdown: {markdown}"
+    );
+    let applied = run_pass(
+        &dir,
+        "2026-11-24T00:00:00Z",
+        &PerishablesAuditor::default(),
+        Mode::Apply,
+    )
+    .unwrap();
+    let markdown = applied.to_markdown();
+    assert!(
+        markdown.contains("- pass state recorded at .recension/pass-state.json"),
+        "markdown: {markdown}"
+    );
+}
+
+#[test]
 fn an_unclosed_frontmatter_block_is_named_in_the_notes() {
     // Register R2-06, in the narrowed form the convergence left:
     // a block that never closes is read as written, its type and
