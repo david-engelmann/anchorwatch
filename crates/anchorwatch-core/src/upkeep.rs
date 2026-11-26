@@ -20,12 +20,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::CONTRACT_VERSION;
-use crate::auditor::{Auditor, AuditorReport, Finding, Tier};
+use crate::auditor::{Auditor, AuditorReport, Finding, Severity, Tier};
 use crate::bundle::{Bundle, StateManifest};
 use crate::json::{Json, Parsed, parse};
 use crate::queue::{
-    INDEX_DRIFT, LAPSED_VERIFICATION, NO_REVIEW_DATE, PROVENANCE_GAP, QueueItem, QueueState,
-    REGISTRY_DRIFT, STALE, SUPERSESSION_DEFECT, TIER_DROP, TYPE_MISSING, sort_queue,
+    INDEX_DRIFT, LAPSED_VERIFICATION, MALFORMED_VERIFICATION, NO_REVIEW_DATE, PROVENANCE_GAP,
+    QueueItem, QueueState, REGISTRY_DRIFT, STALE, SUPERSESSION_DEFECT, TIER_DROP, TYPE_MISSING,
+    sort_queue,
 };
 use crate::sha256::sha256_hex;
 use crate::time::parse_timestamp;
@@ -226,6 +227,20 @@ fn queue_item_json(item: &QueueItem) -> Json {
 }
 
 /// Runs one upkeep pass over the bundle at `root`.
+/// Builds the queue item an auditor finding raises, carrying the
+/// finding's rule identifier and evidence. The item's priority
+/// derives from the finding's severity, an error worked before a
+/// warning, the same rule the drift check applies to its items.
+fn finding_item(finding: &Finding, reason: &str, run_id: &str) -> QueueItem {
+    let mut evidence = vec![("rule_id".to_string(), finding.rule_id.clone())];
+    evidence.extend(finding.evidence.iter().cloned());
+    let mut item = QueueItem::new(finding.concept.clone(), reason, evidence, run_id);
+    if finding.severity == Severity::Error {
+        item.priority = 1;
+    }
+    item
+}
+
 pub fn run_pass(
     root: &Path,
     as_of: &str,
@@ -274,25 +289,22 @@ pub fn run_pass(
     // The absence rule is the engine's: a concept with no review
     // date is queued for one, never given one.
     for finding in &auditor_report.findings {
-        if finding.rule_id == "AW-FRE-01" || finding.rule_id == "AW-FRE-02" {
-            let mut evidence = vec![("rule_id".to_string(), finding.rule_id.clone())];
-            evidence.extend(finding.evidence.iter().cloned());
-            if finding.rule_id == "AW-FRE-02" {
-                evidence.push(("malformed".to_string(), "true".to_string()));
+        if finding.rule_id == "STALE_BUT_STABLE" || finding.rule_id == "UNPARSEABLE_STALE_AFTER" {
+            let mut item = finding_item(finding, STALE, &run_id);
+            if finding.rule_id == "UNPARSEABLE_STALE_AFTER" {
+                item.evidence
+                    .push(("malformed".to_string(), "true".to_string()));
             }
-            let mut item = QueueItem::new(finding.concept.clone(), STALE, evidence, &run_id);
-            item.priority = 1;
             items.push(item);
         }
-        if finding.rule_id.starts_with("AW-PRO-") {
-            let mut evidence = vec![("rule_id".to_string(), finding.rule_id.clone())];
-            evidence.extend(finding.evidence.iter().cloned());
-            items.push(QueueItem::new(
-                finding.concept.clone(),
-                PROVENANCE_GAP,
-                evidence,
-                &run_id,
-            ));
+        if finding.rule_id == "MALFORMED_VERIFICATION" {
+            items.push(finding_item(finding, MALFORMED_VERIFICATION, &run_id));
+        }
+        if matches!(
+            finding.rule_id.as_str(),
+            "UNRESOLVED_CITATION" | "MISSING_SOURCE" | "SOURCE_DRIFT"
+        ) {
+            items.push(finding_item(finding, PROVENANCE_GAP, &run_id));
         }
     }
     for concept in bundle.concepts() {
@@ -354,15 +366,11 @@ pub fn run_pass(
     // Step 4, supersession audit. Declared chains are authoritative;
     // defects and proposals arrive as auditor findings.
     for finding in &auditor_report.findings {
-        if finding.rule_id.starts_with("AW-SUP-") {
-            let mut evidence = vec![("rule_id".to_string(), finding.rule_id.clone())];
-            evidence.extend(finding.evidence.iter().cloned());
-            items.push(QueueItem::new(
-                finding.concept.clone(),
-                SUPERSESSION_DEFECT,
-                evidence,
-                &run_id,
-            ));
+        if matches!(
+            finding.rule_id.as_str(),
+            "DANGLING_SUPERSEDED_BY" | "SUPERSESSION_CYCLE" | "SUPERSEDED_WITHOUT_DEPRECATED"
+        ) {
+            items.push(finding_item(finding, SUPERSESSION_DEFECT, &run_id));
         }
     }
 

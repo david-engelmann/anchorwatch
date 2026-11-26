@@ -5,8 +5,8 @@
 
 use std::path::PathBuf;
 
-use anchorwatch_core::auditor::StubAuditor;
 use anchorwatch_core::migrate::{OkfNativeProfile, run_migration};
+use anchorwatch_core::perishables::PerishablesAuditor;
 use anchorwatch_core::upkeep::{Mode, run_pass};
 
 fn write_file(root: &std::path::Path, rel: &str, content: &str) {
@@ -251,7 +251,13 @@ fn the_migrated_bundle_stands_up_under_an_upkeep_pass() {
     let source = fixture("interop");
     let out = out_dir("interop-out");
     run_migration(&OkfNativeProfile, &source, &out, "2026-11-24T00:00:00Z").unwrap();
-    let report = run_pass(&out, "2026-11-24T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let report = run_pass(
+        &out,
+        "2026-11-24T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
     assert_eq!(report.concept_count, 3);
     // Both concepts without a review date queue for one, and the
     // concept carrying a date queues for nothing.
@@ -261,16 +267,16 @@ fn the_migrated_bundle_stands_up_under_an_upkeep_pass() {
         .filter(|item| item.reason == "NO REVIEW DATE")
         .collect();
     assert_eq!(no_date.len(), 2);
-    // Recorded stub limitation (design record section 33): the
-    // stub auditor resolves path fields by exact path match, so
-    // the spec's leading-slash form reads as a dangling target
-    // to it. The migration follows the spec; the queue item
-    // stands until the auditor learns the section 6.2 reading.
+    // The convergence closed the disagreement recorded in design
+    // record section 33: the stub auditor resolved path fields by
+    // exact path match and read the spec's leading-slash form as
+    // a dangling target, where the real auditor resolves paths as
+    // section 6.2 of the spec provides. The migrated bundle's
+    // supersession is sound, and no defect item stands.
     let defect: Vec<_> = report
         .queue
         .iter()
         .filter(|item| item.reason == "SUPERSESSION DEFECT")
         .collect();
-    assert_eq!(defect.len(), 1);
-    assert_eq!(defect[0].concept, "metrics/legacy.md");
+    assert_eq!(defect.len(), 0);
 }

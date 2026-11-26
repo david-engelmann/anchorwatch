@@ -16,6 +16,12 @@ pub const STALE: &str = "STALE";
 pub const LAPSED_VERIFICATION: &str = "LAPSED VERIFICATION";
 /// Reason code for a recomputed tier lower than the last recorded tier.
 pub const TIER_DROP: &str = "TIER DROP";
+/// Reason code for a verification event that cannot be judged,
+/// lacking an actor or a parseable timestamp, so the concept's
+/// recorded verification misstates its state. The name mirrors the
+/// auditor's own finding label, adopted by amendment in the
+/// convergence round on the same precedent as DEFINITION DRIFT.
+pub const MALFORMED_VERIFICATION: &str = "MALFORMED VERIFICATION";
 /// Reason code for a supersession chain problem or proposal.
 pub const SUPERSESSION_DEFECT: &str = "SUPERSESSION DEFECT";
 /// Reason code for a missing or unresolvable source.

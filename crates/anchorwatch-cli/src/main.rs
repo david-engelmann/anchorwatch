@@ -15,9 +15,9 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anchorwatch_core::auditor::StubAuditor;
 use anchorwatch_core::drift::{StubDriftAuditor, run_drift_check};
 use anchorwatch_core::migrate::{ClaudeMemoryProfile, OkfNativeProfile, Profile, run_migration};
+use anchorwatch_core::perishables::PerishablesAuditor;
 use anchorwatch_core::upkeep::{Mode, run_pass};
 
 fn main() -> ExitCode {
@@ -98,7 +98,7 @@ fn run_upkeep(args: &[String]) -> ExitCode {
         eprintln!("upkeep needs --bundle <path> and --as-of <rfc3339>");
         return ExitCode::FAILURE;
     };
-    match run_pass(&bundle, &as_of, &StubAuditor, mode) {
+    match run_pass(&bundle, &as_of, &PerishablesAuditor, mode) {
         Ok(report) => {
             if markdown {
                 print!("{}", report.to_markdown());

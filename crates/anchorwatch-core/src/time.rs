@@ -19,7 +19,8 @@ pub fn parse_timestamp(value: &str) -> Option<i64> {
     let (y, m, d) = parse_date(date_part)?;
     let (time_part, offset_secs) = if let Some(t) = rest.strip_suffix('Z') {
         (t, 0i64)
-    } else if let Some(idx) = rest.rfind(['+', '-']) {
+    } else {
+        let idx = rest.rfind(['+', '-'])?;
         if idx == 0 {
             return None;
         }
@@ -39,8 +40,6 @@ pub fn parse_timestamp(value: &str) -> Option<i64> {
             return None;
         }
         (&rest[..idx], sign * (oh * 3600 + om * 60))
-    } else {
-        return None;
     };
     let mut parts = time_part.split(':');
     let hh: i64 = parts.next()?.parse().ok()?;

@@ -9,7 +9,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anchorwatch_core::auditor::StubAuditor;
+use anchorwatch_core::perishables::PerishablesAuditor;
 use anchorwatch_core::queue::{
     INDEX_DRIFT, NO_REVIEW_DATE, PROVENANCE_GAP, QueueState, REGISTRY_DRIFT, STALE,
     SUPERSESSION_DEFECT, TYPE_MISSING,
@@ -83,7 +83,13 @@ fn reasons_for(report: &anchorwatch_core::upkeep::PassReport, concept: &str) -> 
 #[test]
 fn the_fixture_raises_the_expected_queue() {
     let dir = fixture("basic");
-    let report = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let report = run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
     assert!(reasons_for(&report, "concepts/a.md").contains(&STALE.to_string()));
     assert!(reasons_for(&report, "concepts/b.md").contains(&NO_REVIEW_DATE.to_string()));
     assert!(reasons_for(&report, "concepts/broken.md").contains(&SUPERSESSION_DEFECT.to_string()));
@@ -110,8 +116,20 @@ fn the_fixture_raises_the_expected_queue() {
 #[test]
 fn two_runs_over_the_same_bundle_are_byte_identical() {
     let dir = fixture("determinism");
-    let first = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
-    let second = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let first = run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
+    let second = run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
     assert_eq!(first.to_json(), second.to_json());
     assert_eq!(first.to_markdown(), second.to_markdown());
 }
@@ -124,7 +142,13 @@ fn apply_keeps_the_log_newest_first() {
         "log.md",
         "# Bundle Update Log\n\n## 2026-11-19\n* **Creation**: Bundle created.\n",
     );
-    run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::Apply,
+    )
+    .unwrap();
     let log = std::fs::read_to_string(dir.join("log.md")).unwrap();
     assert!(log.starts_with("# Bundle Update Log"));
     let new_group = log.find("## 2026-11-21").unwrap();
@@ -132,7 +156,13 @@ fn apply_keeps_the_log_newest_first() {
     assert!(new_group < old_group, "log not newest first:\n{log}");
     // A second pass on the same date joins the existing group
     // instead of opening a new one or landing in the older group.
-    run_pass(&dir, "2026-11-21T12:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    run_pass(
+        &dir,
+        "2026-11-21T12:00:00Z",
+        &PerishablesAuditor,
+        Mode::Apply,
+    )
+    .unwrap();
     let log = std::fs::read_to_string(dir.join("log.md")).unwrap();
     assert_eq!(log.matches("## 2026-11-21").count(), 1);
     let first_entry = log.find("Pass ").unwrap();
@@ -140,7 +170,13 @@ fn apply_keeps_the_log_newest_first() {
     assert!(first_entry < second_entry);
     assert!(second_entry < log.find("## 2026-11-19").unwrap());
     // A backfilled date lands between the newer and older groups.
-    run_pass(&dir, "2026-11-20T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    run_pass(
+        &dir,
+        "2026-11-20T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::Apply,
+    )
+    .unwrap();
     let log = std::fs::read_to_string(dir.join("log.md")).unwrap();
     let d21 = log.find("## 2026-11-21").unwrap();
     let d20 = log.find("## 2026-11-20").unwrap();
@@ -179,12 +215,24 @@ fn repair_fixture(name: &str) -> PathBuf {
 #[test]
 fn apply_restores_a_stripped_type_key_and_leaves_the_blockless_file() {
     let dir = repair_fixture("typerepair");
-    let dry = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let dry = run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
     assert!(reasons_for(&dry, "concepts/keyless.md").contains(&TYPE_MISSING.to_string()));
     assert!(reasons_for(&dry, "concepts/blockless.md").contains(&TYPE_MISSING.to_string()));
     let blockless_before = std::fs::read_to_string(dir.join("concepts/blockless.md")).unwrap();
 
-    let applied = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    let applied = run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::Apply,
+    )
+    .unwrap();
     assert!(
         applied
             .actions
@@ -206,7 +254,13 @@ fn apply_restores_a_stripped_type_key_and_leaves_the_blockless_file() {
         blockless_before
     );
 
-    let second = run_pass(&dir, "2026-11-22T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let second = run_pass(
+        &dir,
+        "2026-11-22T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
     assert!(!reasons_for(&second, "concepts/keyless.md").contains(&TYPE_MISSING.to_string()));
     assert!(reasons_for(&second, "concepts/blockless.md").contains(&TYPE_MISSING.to_string()));
 }
@@ -222,7 +276,13 @@ fn a_legacy_queue_migrates_to_the_dot_directory() {
         "{\"as_of\": \"2026-11-20T00:00:00Z\", \"items\": [{\"concept\": \"concepts/b.md\", \"evidence\": {}, \"first_raised\": \"run-legacy00000\", \"last_confirmed\": \"run-legacy00000\", \"priority\": 2, \"reason\": \"NO REVIEW DATE\", \"state\": \"open\"}], \"run_id\": \"run-legacy00000\"}",
     );
     write_file(&dir, "upkeep/queue.md", "# Re-verification queue\n");
-    let report = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    let report = run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::Apply,
+    )
+    .unwrap();
     let item = report
         .queue
         .iter()
@@ -255,7 +315,13 @@ fn a_claim_registry_is_checked_against_the_bundle() {
         "claims.json",
         "{\"claims\": [{\"id\": \"claim-1\", \"concept\": \"concepts/a.md\"}, {\"id\": \"claim-2\", \"concept\": \"concepts/gone.md\"}, {\"id\": \"claim-3\", \"concept\": \"concepts/b.md\", \"supersedes\": [\"claim-1\", \"claim-9\"]}, {\"id\": \"claim-3\", \"concept\": \"concepts/b.md\"}]}",
     );
-    let report = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let report = run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
     assert!(
         report
             .notes
@@ -312,7 +378,13 @@ fn a_near_miss_registry_is_named_not_passed_over() {
         "claims.json",
         "{\"claims\": [{\"id\": \"claim-1\", \"concept\": \"concepts/a.md\"}, {\"id\": \"claim-2\"}]}",
     );
-    let report = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let report = run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
     assert!(
         report
             .notes
@@ -344,7 +416,13 @@ fn two_claim_registries_are_reported_not_guessed() {
     let registry = "{\"claims\": [{\"id\": \"claim-1\", \"concept\": \"concepts/a.md\"}]}";
     write_file(&dir, "claims.json", registry);
     write_file(&dir, ".recension/claims-copy.json", registry);
-    let report = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let report = run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
     assert!(
         report
             .notes
@@ -389,7 +467,13 @@ fn a_dash_bullet_index_is_a_link_list_not_prose() {
     );
     write_file(&dir, "concepts/index.md", "# concepts\n\n- [A](a.md)\n");
     write_file(&dir, "log.md", "# Bundle Update Log\n");
-    let report = run_pass(&dir, "2026-11-24T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    let report = run_pass(
+        &dir,
+        "2026-11-24T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::Apply,
+    )
+    .unwrap();
     let item = report
         .queue
         .iter()
@@ -412,7 +496,13 @@ fn a_dash_bullet_index_is_a_link_list_not_prose() {
     );
     let regenerated = std::fs::read_to_string(dir.join("concepts/index.md")).unwrap();
     assert!(regenerated.contains("* [B](b.md)"));
-    let second = run_pass(&dir, "2026-11-24T01:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let second = run_pass(
+        &dir,
+        "2026-11-24T01:00:00Z",
+        &PerishablesAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
     assert!(
         !second
             .queue
@@ -461,7 +551,13 @@ fn state_files_carry_paths_with_commas() {
         "# concepts\n\n* [A B](a,b.md)\n* [Stripped](stripped,x.md)\n",
     );
     write_file(&dir, "log.md", "# Bundle Update Log\n");
-    let first = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    let first = run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::Apply,
+    )
+    .unwrap();
     assert!(
         reasons_for(&first, "concepts/stripped,x.md").contains(&TYPE_MISSING.to_string()),
         "the manifest reader carried the comma path"
@@ -483,7 +579,13 @@ fn state_files_carry_paths_with_commas() {
         "concepts/a,b.md",
         "---\ntype: Note\ntitle: \"A B\"\ngenerated:\n  at: \"2026-11-20T00:00:00Z\"\nverified:\n  - by: \"human:ada\"\n    at: \"2026-11-12T00:00:00Z\"\n---\nbody, changed\n",
     );
-    let second = run_pass(&dir, "2026-11-22T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let second = run_pass(
+        &dir,
+        "2026-11-22T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
     let waived = second
         .queue
         .iter()
@@ -518,7 +620,13 @@ fn a_review_date_that_does_not_exist_is_malformed_not_stale() {
     );
     write_file(&dir, "concepts/index.md", "# concepts\n\n* [A](a.md)\n");
     write_file(&dir, "log.md", "# Bundle Update Log\n");
-    let report = run_pass(&dir, "2026-11-24T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let report = run_pass(
+        &dir,
+        "2026-11-24T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
     let item = report
         .queue
         .iter()
@@ -534,7 +642,7 @@ fn a_review_date_that_does_not_exist_is_malformed_not_stale() {
     assert!(
         item.evidence
             .iter()
-            .any(|(k, v)| k == "rule_id" && v == "AW-FRE-02"),
+            .any(|(k, v)| k == "rule_id" && v == "UNPARSEABLE_STALE_AFTER"),
         "evidence: {:?}",
         item.evidence
     );
@@ -561,7 +669,13 @@ fn a_crlf_root_index_keeps_its_frontmatter_when_regenerated() {
     );
     write_file(&dir, "concepts/index.md", "# concepts\n\n* [A](a.md)\n");
     write_file(&dir, "log.md", "# Bundle Update Log\n");
-    let report = run_pass(&dir, "2026-11-24T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    let report = run_pass(
+        &dir,
+        "2026-11-24T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::Apply,
+    )
+    .unwrap();
     assert!(
         report
             .actions
@@ -603,7 +717,13 @@ fn an_index_over_no_concepts_is_reported_and_never_rewritten() {
     );
     write_file(&dir, "concepts/index.md", "# concepts\n\n* [A](a.md)\n");
     write_file(&dir, "log.md", "# Bundle Update Log\n");
-    let report = run_pass(&dir, "2026-11-24T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    let report = run_pass(
+        &dir,
+        "2026-11-24T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::Apply,
+    )
+    .unwrap();
     let item = report
         .queue
         .iter()
@@ -630,7 +750,13 @@ fn an_index_over_no_concepts_is_reported_and_never_rewritten() {
 #[test]
 fn a_second_pass_observes_a_tier_drop() {
     let dir = fixture("tierdrop");
-    let first = run_pass(&dir, "2026-11-21T00:00:00Z", &StubAuditor, Mode::Apply).unwrap();
+    let first = run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::Apply,
+    )
+    .unwrap();
     assert_eq!(first.concept_count, 4);
     assert!(dir.join(".recension").join("queue.json").exists());
     assert!(dir.join(".recension").join("pass-state.json").exists());
@@ -641,7 +767,13 @@ fn a_second_pass_observes_a_tier_drop() {
         "concepts/b.md",
         "---\ntype: Note\ntitle: \"B\"\ngenerated:\n  at: \"2026-11-20T00:00:00Z\"\nverified:\n  - by: \"human:ada\"\n    at: \"2026-11-12T00:00:00Z\"\n---\nbody b, changed\n",
     );
-    let second = run_pass(&dir, "2026-11-22T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let second = run_pass(
+        &dir,
+        "2026-11-22T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
     let reasons = reasons_for(&second, "concepts/b.md");
     assert!(
         reasons.contains(&"TIER DROP".to_string()),

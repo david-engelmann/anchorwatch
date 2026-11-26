@@ -10,14 +10,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.91
-        with:
-          components: rustfmt, clippy
+      - name: Install Rust 1.100.0
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.100.0
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --offline -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Build
-        run: cargo build --workspace --offline
+        run: cargo build --workspace
       - name: Test
-        run: cargo test --workspace --offline
+        run: cargo test --workspace

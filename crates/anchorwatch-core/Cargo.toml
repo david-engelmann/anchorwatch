@@ -7,3 +7,4 @@ rust-version.workspace = true
 description = "Core library for anchorwatch, the deterministic upkeep engine for OKF v0.3 knowledge bundles"
 
 [dependencies]
+perishables-core = { git = "https://github.com/david-engelmann/perishables", rev = "2d5681a4323fda8bc69beabb05f73b062529aa68" }

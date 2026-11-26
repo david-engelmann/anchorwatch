@@ -20,6 +20,7 @@ pub mod drift;
 pub mod frontmatter;
 pub mod json;
 pub mod migrate;
+pub mod perishables;
 pub mod queue;
 pub mod sha256;
 pub mod time;
