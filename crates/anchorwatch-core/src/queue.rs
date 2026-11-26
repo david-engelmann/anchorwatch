@@ -22,6 +22,12 @@ pub const TIER_DROP: &str = "TIER DROP";
 /// auditor's own finding label, adopted by amendment in the
 /// convergence round on the same precedent as DEFINITION DRIFT.
 pub const MALFORMED_VERIFICATION: &str = "MALFORMED VERIFICATION";
+/// Reason code for an attested computation whose claimed result
+/// does not recompute, or whose claim no computation can support.
+/// The name mirrors the auditor's own finding family, adopted by
+/// amendment alongside MALFORMED VERIFICATION, and it gained its
+/// producer in the attestation follow-on round.
+pub const ATTESTATION_DEFECT: &str = "ATTESTATION DEFECT";
 /// Reason code for a supersession chain problem or proposal.
 pub const SUPERSESSION_DEFECT: &str = "SUPERSESSION DEFECT";
 /// Reason code for a missing or unresolvable source.

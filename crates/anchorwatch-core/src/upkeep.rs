@@ -24,9 +24,9 @@ use crate::auditor::{Auditor, AuditorReport, Finding, Severity, Tier};
 use crate::bundle::{Bundle, StateManifest};
 use crate::json::{Json, Parsed, parse};
 use crate::queue::{
-    INDEX_DRIFT, LAPSED_VERIFICATION, MALFORMED_VERIFICATION, NO_REVIEW_DATE, PROVENANCE_GAP,
-    QueueItem, QueueState, REGISTRY_DRIFT, STALE, SUPERSESSION_DEFECT, TIER_DROP, TYPE_MISSING,
-    sort_queue,
+    ATTESTATION_DEFECT, INDEX_DRIFT, LAPSED_VERIFICATION, MALFORMED_VERIFICATION, NO_REVIEW_DATE,
+    PROVENANCE_GAP, QueueItem, QueueState, REGISTRY_DRIFT, STALE, SUPERSESSION_DEFECT, TIER_DROP,
+    TYPE_MISSING, sort_queue,
 };
 use crate::sha256::sha256_hex;
 use crate::time::parse_timestamp;
@@ -299,6 +299,12 @@ pub fn run_pass(
         }
         if finding.rule_id == "MALFORMED_VERIFICATION" {
             items.push(finding_item(finding, MALFORMED_VERIFICATION, &run_id));
+        }
+        if matches!(
+            finding.rule_id.as_str(),
+            "ATTESTED_RESULT_MISMATCH" | "UNATTESTED_CLAIM"
+        ) {
+            items.push(finding_item(finding, ATTESTATION_DEFECT, &run_id));
         }
         if matches!(
             finding.rule_id.as_str(),

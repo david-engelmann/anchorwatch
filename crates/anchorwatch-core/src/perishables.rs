@@ -13,10 +13,16 @@
 //! identifiers: the publisher's stable finding labels are adopted
 //! verbatim, retiring the placeholder series the stub used.
 //!
-//! Attested computations are outside this adapter: their verdicts
-//! come from re-execution in the publisher's command-line executor,
-//! not from the library's checks, and they land as a follow-on
-//! round of their own, as the design record provides.
+//! Attested computations arrive through the publisher's executor,
+//! which the adapter calls only when the operator opts in, the
+//! upkeep command's attestation flag being off by default: a
+//! scheduled pass that spawns an interpreter by default would
+//! change what the tool is trusted to do unattended. With the flag
+//! on, the executor re-runs the bundle's declared computations
+//! under the publisher's deterministic profile, with the
+//! publisher's default limits rather than its environment
+//! overrides, so an attesting pass over the same bundle at the
+//! same instant still produces the same result.
 
 use perishables_core::{
     AuditClock, Bundle as PerishablesBundle, EventClass, FindingCode, check_currency, check_drift,
@@ -31,7 +37,13 @@ use crate::bundle::Bundle;
 
 /// The trust auditor as the upkeep engine consumes it: the
 /// perishables core library behind the locked contract.
-pub struct PerishablesAuditor;
+#[derive(Default)]
+pub struct PerishablesAuditor {
+    /// Whether the audit re-executes the bundle's declared
+    /// computations and reports their verdicts. Off by default;
+    /// the upkeep command's attestation flag turns it on.
+    pub execute_attestations: bool,
+}
 
 /// The adapter's published code-to-severity table. Nine codes are
 /// defects the queue must carry at error severity; the three
@@ -102,6 +114,13 @@ impl Auditor for PerishablesAuditor {
         raw_findings.extend(check_freshness(&p_bundle, &clock));
         raw_findings.extend(check_provenance(&p_bundle));
         raw_findings.extend(check_drift(&p_bundle));
+        if self.execute_attestations {
+            let reports = perishables::execute::run_computations(
+                &p_bundle,
+                &perishables::execute::ExecConfig::default(),
+            );
+            raw_findings.extend(perishables::execute::findings_from_reports(&reports));
+        }
 
         let mut currency = Vec::new();
         let mut provenance = Vec::new();
@@ -202,7 +221,7 @@ mod tests {
                 ("index.md", "# Index\n"),
             ],
         );
-        let report = PerishablesAuditor.audit(&bundle, "2026-11-25T00:00:00Z");
+        let report = PerishablesAuditor::default().audit(&bundle, "2026-11-25T00:00:00Z");
         assert_eq!(report.auditor, "perishables");
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].rule_id, "DANGLING_SUPERSEDED_BY");
@@ -222,7 +241,7 @@ mod tests {
                 ("index.md", "# Index\n"),
             ],
         );
-        let report = PerishablesAuditor.audit(&bundle, "2026-11-25T00:00:00Z");
+        let report = PerishablesAuditor::default().audit(&bundle, "2026-11-25T00:00:00Z");
         let entry = &report.currency[0];
         assert_eq!(entry.concept, "a.md");
         assert_eq!(entry.current_events, 1);

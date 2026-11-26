@@ -254,7 +254,7 @@ fn the_migrated_bundle_stands_up_under_an_upkeep_pass() {
     let report = run_pass(
         &out,
         "2026-11-24T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::DryRun,
     )
     .unwrap();
