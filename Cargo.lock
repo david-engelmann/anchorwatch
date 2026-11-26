@@ -13,10 +13,28 @@ dependencies = [
 name = "anchorwatch-core"
 version = "0.1.0"
 dependencies = [
+ "perishables",
  "perishables-core",
+]
+
+[[package]]
+name = "perishables"
+version = "0.1.0"
+source = "git+https://github.com/david-engelmann/perishables?rev=2d5681a4323fda8bc69beabb05f73b062529aa68#2d5681a4323fda8bc69beabb05f73b062529aa68"
+dependencies = [
+ "perishables-core",
+ "perishables-semantic",
 ]
 
 [[package]]
 name = "perishables-core"
 version = "0.1.0"
 source = "git+https://github.com/david-engelmann/perishables?rev=2d5681a4323fda8bc69beabb05f73b062529aa68#2d5681a4323fda8bc69beabb05f73b062529aa68"
+
+[[package]]
+name = "perishables-semantic"
+version = "0.1.0"
+source = "git+https://github.com/david-engelmann/perishables?rev=2d5681a4323fda8bc69beabb05f73b062529aa68#2d5681a4323fda8bc69beabb05f73b062529aa68"
+dependencies = [
+ "perishables-core",
+]

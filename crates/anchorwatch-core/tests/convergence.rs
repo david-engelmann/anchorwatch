@@ -9,7 +9,9 @@
 use std::path::PathBuf;
 
 use anchorwatch_core::perishables::PerishablesAuditor;
-use anchorwatch_core::queue::{MALFORMED_VERIFICATION, PROVENANCE_GAP, STALE, SUPERSESSION_DEFECT};
+use anchorwatch_core::queue::{
+    ATTESTATION_DEFECT, MALFORMED_VERIFICATION, PROVENANCE_GAP, STALE, SUPERSESSION_DEFECT,
+};
 use anchorwatch_core::upkeep::{Mode, PassReport, run_pass};
 
 const AS_OF: &str = "2026-11-25T00:00:00Z";
@@ -32,7 +34,14 @@ fn bundle(name: &str, files: &[(&str, &str)]) -> PathBuf {
 }
 
 fn pass(dir: &std::path::Path) -> PassReport {
-    run_pass(dir, AS_OF, &PerishablesAuditor, Mode::DryRun).unwrap()
+    run_pass(dir, AS_OF, &PerishablesAuditor::default(), Mode::DryRun).unwrap()
+}
+
+fn pass_attesting(dir: &std::path::Path) -> PassReport {
+    let auditor = PerishablesAuditor {
+        execute_attestations: true,
+    };
+    run_pass(dir, AS_OF, &auditor, Mode::DryRun).unwrap()
 }
 
 /// The priorities of the items one concept drew under one reason.
@@ -51,7 +60,11 @@ fn any_defect(report: &PassReport, concept: &str) -> bool {
         item.concept == concept
             && matches!(
                 item.reason.as_str(),
-                STALE | SUPERSESSION_DEFECT | PROVENANCE_GAP | MALFORMED_VERIFICATION
+                STALE
+                    | SUPERSESSION_DEFECT
+                    | PROVENANCE_GAP
+                    | MALFORMED_VERIFICATION
+                    | ATTESTATION_DEFECT
             )
     })
 }
@@ -238,6 +251,48 @@ fn a_lapsed_verification_queues_nothing_of_its_own_on_a_first_pass() {
     );
     let report = pass(&dir);
     assert!(!any_defect(&report, "a.md"));
+}
+
+/// An attested computation concept in the publisher's own shape,
+/// claiming the given result for a computation giving three.
+fn computation_concept(claimed: &str) -> String {
+    format!(
+        "---\ntype: Attested Computation\ntitle: Row count\nstatus: stable\nruntime: python\n---\n\n# Computation\n\n```python\nresult = len([1, 2, 3])\n```\n\n# Claimed result\n\nThe attested result claimed for this computation is {claimed}.\n"
+    )
+}
+
+#[test]
+fn a_mismatched_attestation_raises_an_attestation_defect_when_asked() {
+    let dir = bundle("attest-mismatch", &[("a.md", &computation_concept("4"))]);
+    let report = pass_attesting(&dir);
+    assert_eq!(priorities(&report, "a.md", ATTESTATION_DEFECT), vec![1]);
+}
+
+#[test]
+fn a_mismatched_attestation_raises_nothing_by_default() {
+    let dir = bundle("attest-off", &[("a.md", &computation_concept("4"))]);
+    let report = pass(&dir);
+    assert!(!any_defect(&report, "a.md"));
+}
+
+#[test]
+fn a_matching_attestation_raises_nothing_when_asked() {
+    let dir = bundle("attest-match", &[("a.md", &computation_concept("3"))]);
+    let report = pass_attesting(&dir);
+    assert!(!any_defect(&report, "a.md"));
+}
+
+#[test]
+fn a_claim_no_computation_supports_raises_an_attestation_defect_when_asked() {
+    let dir = bundle(
+        "attest-unattested",
+        &[(
+            "a.md",
+            "---\ntype: Attested Computation\ntitle: Row count\nstatus: stable\nruntime: python\n---\n\n# Claimed result\n\nThe attested result claimed for this computation is 3.\n",
+        )],
+    );
+    let report = pass_attesting(&dir);
+    assert_eq!(priorities(&report, "a.md", ATTESTATION_DEFECT), vec![1]);
 }
 
 #[test]

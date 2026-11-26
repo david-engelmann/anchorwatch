@@ -86,7 +86,7 @@ fn the_fixture_raises_the_expected_queue() {
     let report = run_pass(
         &dir,
         "2026-11-21T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::DryRun,
     )
     .unwrap();
@@ -119,14 +119,14 @@ fn two_runs_over_the_same_bundle_are_byte_identical() {
     let first = run_pass(
         &dir,
         "2026-11-21T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::DryRun,
     )
     .unwrap();
     let second = run_pass(
         &dir,
         "2026-11-21T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::DryRun,
     )
     .unwrap();
@@ -145,7 +145,7 @@ fn apply_keeps_the_log_newest_first() {
     run_pass(
         &dir,
         "2026-11-21T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::Apply,
     )
     .unwrap();
@@ -159,7 +159,7 @@ fn apply_keeps_the_log_newest_first() {
     run_pass(
         &dir,
         "2026-11-21T12:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::Apply,
     )
     .unwrap();
@@ -173,7 +173,7 @@ fn apply_keeps_the_log_newest_first() {
     run_pass(
         &dir,
         "2026-11-20T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::Apply,
     )
     .unwrap();
@@ -218,7 +218,7 @@ fn apply_restores_a_stripped_type_key_and_leaves_the_blockless_file() {
     let dry = run_pass(
         &dir,
         "2026-11-21T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::DryRun,
     )
     .unwrap();
@@ -229,7 +229,7 @@ fn apply_restores_a_stripped_type_key_and_leaves_the_blockless_file() {
     let applied = run_pass(
         &dir,
         "2026-11-21T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::Apply,
     )
     .unwrap();
@@ -257,7 +257,7 @@ fn apply_restores_a_stripped_type_key_and_leaves_the_blockless_file() {
     let second = run_pass(
         &dir,
         "2026-11-22T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::DryRun,
     )
     .unwrap();
@@ -279,7 +279,7 @@ fn a_legacy_queue_migrates_to_the_dot_directory() {
     let report = run_pass(
         &dir,
         "2026-11-21T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::Apply,
     )
     .unwrap();
@@ -318,7 +318,7 @@ fn a_claim_registry_is_checked_against_the_bundle() {
     let report = run_pass(
         &dir,
         "2026-11-21T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::DryRun,
     )
     .unwrap();
@@ -381,7 +381,7 @@ fn a_near_miss_registry_is_named_not_passed_over() {
     let report = run_pass(
         &dir,
         "2026-11-21T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::DryRun,
     )
     .unwrap();
@@ -419,7 +419,7 @@ fn two_claim_registries_are_reported_not_guessed() {
     let report = run_pass(
         &dir,
         "2026-11-21T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::DryRun,
     )
     .unwrap();
@@ -470,7 +470,7 @@ fn a_dash_bullet_index_is_a_link_list_not_prose() {
     let report = run_pass(
         &dir,
         "2026-11-24T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::Apply,
     )
     .unwrap();
@@ -499,7 +499,7 @@ fn a_dash_bullet_index_is_a_link_list_not_prose() {
     let second = run_pass(
         &dir,
         "2026-11-24T01:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::DryRun,
     )
     .unwrap();
@@ -554,7 +554,7 @@ fn state_files_carry_paths_with_commas() {
     let first = run_pass(
         &dir,
         "2026-11-21T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::Apply,
     )
     .unwrap();
@@ -582,7 +582,7 @@ fn state_files_carry_paths_with_commas() {
     let second = run_pass(
         &dir,
         "2026-11-22T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::DryRun,
     )
     .unwrap();
@@ -623,7 +623,7 @@ fn a_review_date_that_does_not_exist_is_malformed_not_stale() {
     let report = run_pass(
         &dir,
         "2026-11-24T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::DryRun,
     )
     .unwrap();
@@ -672,7 +672,7 @@ fn a_crlf_root_index_keeps_its_frontmatter_when_regenerated() {
     let report = run_pass(
         &dir,
         "2026-11-24T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::Apply,
     )
     .unwrap();
@@ -720,7 +720,7 @@ fn an_index_over_no_concepts_is_reported_and_never_rewritten() {
     let report = run_pass(
         &dir,
         "2026-11-24T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::Apply,
     )
     .unwrap();
@@ -753,7 +753,7 @@ fn a_second_pass_observes_a_tier_drop() {
     let first = run_pass(
         &dir,
         "2026-11-21T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::Apply,
     )
     .unwrap();
@@ -770,7 +770,7 @@ fn a_second_pass_observes_a_tier_drop() {
     let second = run_pass(
         &dir,
         "2026-11-22T00:00:00Z",
-        &PerishablesAuditor,
+        &PerishablesAuditor::default(),
         Mode::DryRun,
     )
     .unwrap();

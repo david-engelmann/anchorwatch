@@ -23,11 +23,12 @@ The engine never connects to a warehouse and never holds a vendor credential. Bo
 ```text
 anchorwatch upkeep --bundle ./bundle --as-of 2026-11-24T00:00:00Z
 anchorwatch upkeep --bundle ./bundle --as-of 2026-11-24T00:00:00Z --apply
+anchorwatch upkeep --bundle ./bundle --as-of 2026-11-24T00:00:00Z --attest
 anchorwatch drift --definitions ./manifest.json --live ./live-schema.json --state ./drift-state --as-of 2026-11-24T00:00:00Z --apply
 anchorwatch migrate --profile claude-memory --source ./memory-tree --out ./bundle --as-of 2026-11-24T00:00:00Z
 ```
 
-The upkeep command runs one pass over a bundle. Without --apply it reports and writes nothing. The drift command runs one comparison and keeps its own queue and state in the directory named by --state. The migrate command converts one tree with the named profile and prints its run report, listing the construct classes found against the ledger entries written. All three commands print a JSON report by default and a Markdown report with --format md. Scheduling is left to the owner, through cron, a CI schedule, or any other runner, because the engine itself is a single run that ends.
+The upkeep command runs one pass over a bundle. Without --apply it reports and writes nothing. With --attest it also re-executes the bundle's declared computations through the auditor's executor and queues any claimed result that does not recompute; attestation is off by default, because a scheduled pass should not spawn an interpreter unattended. The drift command runs one comparison and keeps its own queue and state in the directory named by --state. The migrate command converts one tree with the named profile and prints its run report, listing the construct classes found against the ledger entries written. All three commands print a JSON report by default and a Markdown report with --format md. Scheduling is left to the owner, through cron, a CI schedule, or any other runner, because the engine itself is a single run that ends.
 
 ## The migrator
 

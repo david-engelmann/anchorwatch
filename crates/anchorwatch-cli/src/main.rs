@@ -36,7 +36,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage: anchorwatch upkeep --bundle <path> --as-of <rfc3339> [--apply] [--format json|md]\n       anchorwatch drift --definitions <path> --live <path> --state <dir> --as-of <rfc3339> [--apply] [--format json|md]\n       anchorwatch migrate --profile <name> --source <dir> --out <dir> --as-of <rfc3339> [--format json|md]"
+                "usage: anchorwatch upkeep --bundle <path> --as-of <rfc3339> [--apply] [--attest] [--format json|md]\n       anchorwatch drift --definitions <path> --live <path> --state <dir> --as-of <rfc3339> [--apply] [--format json|md]\n       anchorwatch migrate --profile <name> --source <dir> --out <dir> --as-of <rfc3339> [--format json|md]"
             );
             ExitCode::FAILURE
         }
@@ -67,6 +67,7 @@ fn run_upkeep(args: &[String]) -> ExitCode {
     let mut bundle: Option<PathBuf> = None;
     let mut as_of: Option<String> = None;
     let mut mode = Mode::DryRun;
+    let mut attest = false;
     let mut markdown = false;
     let mut i = 0usize;
     while i < args.len() {
@@ -80,6 +81,7 @@ fn run_upkeep(args: &[String]) -> ExitCode {
                 as_of = args.get(i).cloned();
             }
             "--apply" => mode = Mode::Apply,
+            "--attest" => attest = true,
             "--format" => {
                 i += 1;
                 match parse_format(args.get(i)) {
@@ -98,7 +100,10 @@ fn run_upkeep(args: &[String]) -> ExitCode {
         eprintln!("upkeep needs --bundle <path> and --as-of <rfc3339>");
         return ExitCode::FAILURE;
     };
-    match run_pass(&bundle, &as_of, &PerishablesAuditor, mode) {
+    let auditor = PerishablesAuditor {
+        execute_attestations: attest,
+    };
+    match run_pass(&bundle, &as_of, &auditor, mode) {
         Ok(report) => {
             if markdown {
                 print!("{}", report.to_markdown());
