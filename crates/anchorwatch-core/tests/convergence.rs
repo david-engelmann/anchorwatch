@@ -145,6 +145,36 @@ fn a_dangling_target_raises_an_error_defect() {
 }
 
 #[test]
+fn a_typeless_successor_reads_as_dangling_until_it_is_typed() {
+    // The seam pin of section 80. The publisher resolves a
+    // supersession target through its concept map, and a file
+    // without a type is no concept to it, so the chain reads
+    // dangling while the successor stands typeless and resolves
+    // the moment the successor carries its type. The behaviour
+    // is the locked contract's own and is accepted on the
+    // record; this test exists so it cannot move silently.
+    let typeless = "---\ntitle: \"B\"\nstale_after: 2027-01-01\n---\n\n# B\n";
+    let dir = bundle(
+        "typeless-successor",
+        &[
+            (
+                "a.md",
+                &concept("status: deprecated\nsuperseded_by: b.md\n"),
+            ),
+            ("b.md", typeless),
+        ],
+    );
+    let report = pass(&dir);
+    assert_eq!(priorities(&report, "a.md", SUPERSESSION_DEFECT), vec![1]);
+    std::fs::write(dir.join("b.md"), concept("")).unwrap();
+    let report = pass(&dir);
+    assert_eq!(
+        priorities(&report, "a.md", SUPERSESSION_DEFECT),
+        Vec::<u8>::new()
+    );
+}
+
+#[test]
 fn a_superseded_concept_still_stable_raises_a_warning_defect() {
     let dir = bundle(
         "without-deprecated",
