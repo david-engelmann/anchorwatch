@@ -600,6 +600,40 @@ fn state_files_carry_paths_with_commas() {
 }
 
 #[test]
+fn an_applying_pass_leaves_exactly_its_state_files_and_no_temporaries() {
+    // The fourteenth register's observable contract. The
+    // engine's state files are written through a temporary and
+    // renamed over, so beside the fixture's own manifest the
+    // state directory holds exactly the pass's three durable
+    // files, each whole, and no temporary residue.
+    let dir = fixture("durable-state");
+    run_pass(
+        &dir,
+        "2026-11-24T00:00:00Z",
+        &PerishablesAuditor::default(),
+        Mode::Apply,
+    )
+    .unwrap();
+    let state_dir = dir.join(".recension");
+    let mut names: Vec<String> = std::fs::read_dir(&state_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        vec![
+            "pass-state.json".to_string(),
+            "queue.json".to_string(),
+            "queue.md".to_string(),
+            "state.json".to_string()
+        ]
+    );
+    let queue_json = std::fs::read_to_string(state_dir.join("queue.json")).unwrap();
+    assert!(queue_json.contains("\"items\""), "queue: {queue_json}");
+}
+
+#[test]
 fn the_markdown_report_names_its_auditor_and_lists_its_actions() {
     // The thirteenth register's repair. The human form of the
     // report listed findings without naming the auditor that

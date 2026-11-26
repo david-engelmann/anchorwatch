@@ -223,6 +223,41 @@ fn long_type_spellings_fold_to_their_families() {
     assert_eq!(report.queue.len(), 0);
 }
 
+#[test]
+fn an_applying_drift_check_leaves_exactly_its_state_files() {
+    // The same durable-write contract on the drift side: the
+    // state directory holds exactly the check's three files,
+    // each whole, and no temporary residue.
+    let dir =
+        std::env::temp_dir().join(format!("anchorwatch-drift-durable-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    write_file(&dir, "definitions.yaml", VIEW);
+    write_file(&dir, "live.json", VIEW_LIVE);
+    run_drift_check(
+        &dir.join("definitions.yaml"),
+        &dir.join("live.json"),
+        &dir.join("state"),
+        "2026-11-24T00:00:00Z",
+        &StubDriftAuditor,
+        Mode::Apply,
+    )
+    .unwrap();
+    let mut names: Vec<String> = std::fs::read_dir(dir.join("state"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        vec![
+            "drift-queue.json".to_string(),
+            "drift-queue.md".to_string(),
+            "drift-state.json".to_string()
+        ]
+    );
+}
+
 const METRIC_VIEW: &str = r#"version: 1.1
 source: main.sales.orders
 fields:

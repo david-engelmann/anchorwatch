@@ -10,6 +10,29 @@
 //! an item to done only on observed evidence; a human or agent moves
 //! it to waived, with the waiver recorded in the queue file itself.
 
+use std::path::{Path, PathBuf};
+
+/// Writes one of the engine's own state files durably: the
+/// content lands in a sibling temporary first and is renamed
+/// over the target, so a reader, including the next pass after
+/// a crash, sees the old file whole or the new file whole and
+/// never a torn one. The state files are the engine's memory
+/// across passes, and a torn queue would forget what a human
+/// did to it, a waiver above all. Bundle content files are not
+/// written this way; they are the user's, and the queue is what
+/// records their state.
+pub(crate) fn write_durably(path: &Path, content: &str) -> std::io::Result<()> {
+    let mut tmp_name = path.as_os_str().to_os_string();
+    tmp_name.push(".tmp");
+    let tmp = PathBuf::from(tmp_name);
+    std::fs::write(&tmp, content)?;
+    if let Err(error) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+    Ok(())
+}
+
 /// Reason code for a passed `stale_after`.
 pub const STALE: &str = "STALE";
 /// Reason code for a verification that predates the last change.
@@ -138,4 +161,40 @@ pub fn sort_queue(items: &mut [QueueItem]) {
             .then_with(|| a.concept.cmp(&b.concept))
             .then_with(|| a.reason.cmp(&b.reason))
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_durably;
+
+    #[test]
+    fn a_durable_write_lands_exactly_and_leaves_no_temporary() {
+        let dir = std::env::temp_dir().join(format!("anchorwatch-durable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("queue.json");
+        write_durably(&path, "{\"items\": []}").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"items\": []}");
+        // A second write replaces the first whole.
+        write_durably(&path, "{\"items\": [1]}").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"items\": [1]}");
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["queue.json".to_string()]);
+    }
+
+    #[test]
+    fn a_durable_write_into_a_missing_directory_fails_by_name() {
+        let path = std::env::temp_dir()
+            .join(format!(
+                "anchorwatch-durable-missing-{}",
+                std::process::id()
+            ))
+            .join("nope")
+            .join("queue.json");
+        assert!(write_durably(&path, "x").is_err());
+        assert!(!path.exists());
+    }
 }
