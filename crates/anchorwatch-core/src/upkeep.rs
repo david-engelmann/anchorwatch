@@ -26,7 +26,7 @@ use crate::json::{Json, Parsed, parse};
 use crate::queue::{
     ATTESTATION_DEFECT, INDEX_DRIFT, LAPSED_VERIFICATION, MALFORMED_VERIFICATION, NO_REVIEW_DATE,
     PROVENANCE_GAP, QueueItem, QueueState, REGISTRY_DRIFT, STALE, SUPERSESSION_DEFECT, TIER_DROP,
-    TYPE_MISSING, sort_queue,
+    TYPE_MISSING, sort_queue, write_durably,
 };
 use crate::sha256::sha256_hex;
 use crate::time::parse_timestamp;
@@ -1131,7 +1131,7 @@ fn apply_writes(
         ("run_id", Json::Str(run_id.to_string())),
     ])
     .render();
-    std::fs::write(upkeep_dir.join("queue.json"), queue_json)
+    write_durably(&upkeep_dir.join("queue.json"), &queue_json)
         .map_err(|e| format!("cannot write queue.json: {e}"))?;
     let mut queue_md = format!("# Re-verification queue\n\nPass {run_id}, as of {as_of}.\n");
     for item in queue {
@@ -1149,7 +1149,7 @@ fn apply_writes(
         ));
     }
     queue_md.push('\n');
-    std::fs::write(upkeep_dir.join("queue.md"), queue_md)
+    write_durably(&upkeep_dir.join("queue.md"), &queue_md)
         .map_err(|e| format!("cannot write queue.md: {e}"))?;
     actions.push("queue written to .recension/queue.md and .recension/queue.json".to_string());
     // A legacy queue under upkeep/ is removed once its successor
@@ -1197,7 +1197,7 @@ fn apply_writes(
         ("tiers", Json::Obj(tiers)),
     ])
     .render();
-    std::fs::write(state_dir.join("pass-state.json"), state)
+    write_durably(&state_dir.join("pass-state.json"), &state)
         .map_err(|e| format!("cannot write pass state: {e}"))?;
     actions.push("pass state recorded at .recension/pass-state.json".to_string());
     // Log entry, grouped under the run date. Section 9 of the spec

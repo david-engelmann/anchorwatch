@@ -38,7 +38,7 @@ use std::path::Path;
 
 use crate::auditor::Severity;
 use crate::json::{Json, Parsed, parse};
-use crate::queue::{DEFINITION_DRIFT, QueueItem, QueueState, sort_queue};
+use crate::queue::{DEFINITION_DRIFT, QueueItem, QueueState, sort_queue, write_durably};
 use crate::sha256::sha256_hex;
 use crate::time::parse_timestamp;
 use crate::upkeep::{Mode, merge_queue};
@@ -1166,9 +1166,9 @@ fn write_drift_state(state_dir: &Path, report: &DriftReport) -> Result<(), Strin
         ("run_id", Json::Str(report.run_id.clone())),
     ])
     .render();
-    std::fs::write(state_dir.join("drift-queue.json"), queue_json)
+    write_durably(&state_dir.join("drift-queue.json"), &queue_json)
         .map_err(|e| format!("cannot write drift queue: {e}"))?;
-    std::fs::write(state_dir.join("drift-queue.md"), report.to_markdown())
+    write_durably(&state_dir.join("drift-queue.md"), &report.to_markdown())
         .map_err(|e| format!("cannot write drift queue markdown: {e}"))?;
     let state_json = Json::obj(vec![
         ("as_of", Json::Str(report.as_of.clone())),
@@ -1182,7 +1182,7 @@ fn write_drift_state(state_dir: &Path, report: &DriftReport) -> Result<(), Strin
         ("schema", Json::Str(DRIFT_SCHEMA_VERSION.to_string())),
     ])
     .render();
-    std::fs::write(state_dir.join("drift-state.json"), state_json)
+    write_durably(&state_dir.join("drift-state.json"), &state_json)
         .map_err(|e| format!("cannot write drift state: {e}"))?;
     Ok(())
 }
