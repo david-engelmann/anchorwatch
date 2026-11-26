@@ -42,4 +42,4 @@ cargo build --release
 cargo test
 ```
 
-The workspace holds two crates with no third-party dependencies. anchorwatch-core carries the engine, the auditor contract, the drift check, and the migrator. anchorwatch-cli carries the command line entry point.
+The workspace holds two crates. anchorwatch-core carries the engine, the auditor contract, the drift check, and the migrator. anchorwatch-cli carries the command line entry point. The core's one dependency is the perishables core library, the trust auditor whose checks the engine consumes through the contract, pinned to a verified revision of its repository.

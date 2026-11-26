@@ -6,8 +6,8 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anchorwatch_core::auditor::StubAuditor;
 use anchorwatch_core::migrate::{ClaudeMemoryProfile, Disposition, run_migration};
+use anchorwatch_core::perishables::PerishablesAuditor;
 use anchorwatch_core::queue::NO_REVIEW_DATE;
 use anchorwatch_core::upkeep::{Mode, run_pass};
 
@@ -381,7 +381,13 @@ fn the_migrated_bundle_stands_up_under_an_upkeep_pass() {
     ));
     let _ = std::fs::remove_dir_all(&out);
     run_migration(&ClaudeMemoryProfile, &source, &out, "2026-11-24T00:00:00Z").unwrap();
-    let report = run_pass(&out, "2026-11-25T00:00:00Z", &StubAuditor, Mode::DryRun).unwrap();
+    let report = run_pass(
+        &out,
+        "2026-11-25T00:00:00Z",
+        &PerishablesAuditor,
+        Mode::DryRun,
+    )
+    .unwrap();
     assert_eq!(report.concept_count, 7);
     // No drift, no defects: only the honest freshness consequence,
     // one NO REVIEW DATE item per concept.
