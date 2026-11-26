@@ -106,6 +106,29 @@ fn a_check_raises_a_defect_and_a_proposal() {
     assert!(!dir.join("state").join("drift-queue.json").exists());
 }
 
+#[test]
+fn the_markdown_report_carries_the_notes_and_the_actions() {
+    // The twenty-third register's repair. The Markdown printed
+    // the closed count and dropped the baseline note that
+    // qualifies it, and said nothing of what an applying check
+    // wrote. The closing sections now mirror the upkeep report.
+    let dir = fixture("markdown-record");
+    let report = check(&dir, "2026-11-24T00:00:00Z", Mode::DryRun);
+    let markdown = report.to_markdown();
+    assert!(
+        markdown.contains(
+            "## Notes\n\n- no previous drift queue; this check establishes the drift baseline\n"
+        ),
+        "markdown:\n{markdown}"
+    );
+    let report = check(&dir, "2026-11-24T00:00:00Z", Mode::Apply);
+    let markdown = report.to_markdown();
+    assert!(
+        markdown.contains("## Actions\n\n- drift queue and check state written\n"),
+        "markdown:\n{markdown}"
+    );
+}
+
 const VIEW: &str = r#"name: sales_view
 tables:
   - name: orders

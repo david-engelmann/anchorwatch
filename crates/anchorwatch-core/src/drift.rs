@@ -982,6 +982,18 @@ impl DriftReport {
             "Raised {} new items; closed {} items.\n",
             self.raised, self.closed
         ));
+        // The closing sections mirror the upkeep report's: what
+        // the check wrote, then its notes, so the printed record
+        // carries the baseline note that qualifies the closed
+        // count above instead of dropping it.
+        out.push_str("\n## Actions\n\n");
+        for action in &self.actions {
+            out.push_str(&format!("- {action}\n"));
+        }
+        out.push_str("\n## Notes\n\n");
+        for note in &self.notes {
+            out.push_str(&format!("- {note}\n"));
+        }
         out
     }
 }
