@@ -1076,7 +1076,8 @@ fn is_dated_log(name: &str) -> bool {
 
 /// Splits a document into its top-level frontmatter scalar fields
 /// and its body. Only unindented key lines are read, and one pair
-/// of surrounding double quotes is stripped from values. A
+/// of surrounding quotes of either kind is stripped from values,
+/// the same rule every other reader in the codebase applies. A
 /// document with no frontmatter block yields no fields and its
 /// whole text as body.
 fn split_frontmatter(text: &str) -> (Vec<(String, String)>, String) {
@@ -1100,12 +1101,8 @@ fn split_frontmatter(text: &str) -> (Vec<(String, String)>, String) {
             continue;
         }
         if let Some((key, value)) = line.split_once(':') {
-            let value = value.trim();
-            let value = value
-                .strip_prefix('"')
-                .and_then(|v| v.strip_suffix('"'))
-                .unwrap_or(value);
-            fields.push((key.trim().to_string(), value.to_string()));
+            let value = unquote(value.trim());
+            fields.push((key.trim().to_string(), value));
         }
     }
     if !in_body {
