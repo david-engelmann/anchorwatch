@@ -403,6 +403,39 @@ pub fn run_migration(
         .any(|e| e.load_bearing && e.disposition == Disposition::Lost);
     let gate_failed = honesty_gate_failed || load_bearing_gate_failed;
 
+    // Integrity: a conversion must never yield two concepts for
+    // one bundle path. The write below writes concepts in order,
+    // so a duplicate path would silently replace the first file
+    // with the second while the ledger counted both, a loss this
+    // tool's charter exists to record rather than commit. The
+    // check belongs to the run, not to any profile, so it stands
+    // here where every profile's outcome passes.
+    let mut seen_paths: BTreeSet<&str> = BTreeSet::new();
+    for concept in &outcome.concepts {
+        if !seen_paths.insert(concept.relpath.as_str()) {
+            return Err(format!(
+                "migration produced two concepts for the same bundle path: {}; refusing to write",
+                concept.relpath
+            ));
+        }
+        // The same loss waits on the generated paths: a concept
+        // landing on a directory's index, the bundle log, the
+        // ledger, or the manifest would be replaced by the
+        // generated file of that name in the same write.
+        let generated = concept.relpath == "index.md"
+            || concept.relpath.ends_with("/index.md")
+            || concept.relpath == "log.md"
+            || concept.relpath == "LOSS-LEDGER.md"
+            || concept.relpath == "loss-ledger.json"
+            || concept.relpath == ".recension/state.json";
+        if generated {
+            return Err(format!(
+                "migration produced a concept for a path the bundle generates itself: {}; refusing to write",
+                concept.relpath
+            ));
+        }
+    }
+
     write_bundle(out, profile.name(), as_of, &run_id, &outcome, &entries)?;
 
     Ok(MigrateReport {

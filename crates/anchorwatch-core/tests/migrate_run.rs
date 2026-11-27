@@ -261,6 +261,43 @@ fn an_output_overlapping_the_source_is_refused() {
 }
 
 #[test]
+fn two_concepts_for_one_bundle_path_are_refused() {
+    // The twenty-ninth register's finding. The memory profile
+    // accepts an area file at any depth and builds its bundle
+    // path from the parent directory's name alone, so two area
+    // files whose parents share a name convert to one path, and
+    // the write silently replaced the first with the second
+    // while the ledger counted both. The run now refuses,
+    // naming the shared path, before anything is written.
+    let source = fixture("area-collision");
+    write_file(&source, "memory/projects/x/PROFILE.md", "# Project X\n");
+    write_file(&source, "memory/archive/x/PROFILE.md", "# Archived X\n");
+    let out = std::env::temp_dir().join(format!(
+        "anchorwatch-migrate-area-collision-out-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&out);
+    let err =
+        run_migration(&ClaudeMemoryProfile, &source, &out, "2026-11-24T00:00:00Z").unwrap_err();
+    assert!(err.contains("profile/x-profile.md"), "error: {err}");
+    assert!(!out.exists());
+    // The same refusal covers a concept landing on a path the
+    // bundle generates itself, here a note named index.md, which
+    // its directory's generated index would silently replace.
+    let source = fixture("generated-collision");
+    write_file(&source, "notes/index.md", "# An index-shaped note\n");
+    let out = std::env::temp_dir().join(format!(
+        "anchorwatch-migrate-generated-collision-out-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&out);
+    let err =
+        run_migration(&ClaudeMemoryProfile, &source, &out, "2026-11-24T00:00:00Z").unwrap_err();
+    assert!(err.contains("notes/index.md"), "error: {err}");
+    assert!(!out.exists());
+}
+
+#[test]
 fn a_non_empty_output_is_refused_and_an_empty_one_accepted() {
     // Register R2-05. A migration writes a complete bundle, so
     // writing into a directory that already holds files would
