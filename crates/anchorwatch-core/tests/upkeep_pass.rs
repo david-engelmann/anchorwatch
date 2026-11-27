@@ -646,6 +646,72 @@ fn state_files_carry_paths_with_commas() {
 }
 
 #[test]
+fn a_done_item_reopens_when_still_raised_and_leaves_uncounted_when_cleared() {
+    // The thirty-sixth register's pin. The merge inherits only
+    // the waived and claimed states, so a done item whose
+    // condition the pass still raises returns open with its
+    // first raising kept, and a done item whose condition has
+    // cleared leaves the queue outside the closed count, which
+    // counts only items a later pass observed resolved.
+    let dir = fixture("done-lifecycle");
+    let first = run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor::default(),
+        Mode::Apply,
+    )
+    .unwrap();
+    // A human marks every item of two concepts done: a concept
+    // that still stands, and a concept about to be removed from
+    // the bundle. A concept can carry several items, and every
+    // one of them must be marked, or an unmarked one would
+    // count as an ordinary closure when its concept goes.
+    let queue_path = dir.join(".recension").join("queue.json");
+    let mut queue_text = std::fs::read_to_string(&queue_path).unwrap();
+    for concept in ["concepts/b.md", "concepts/c.md"] {
+        let count = first
+            .queue
+            .iter()
+            .filter(|item| item.concept == concept)
+            .count();
+        let mut from = 0;
+        for _ in 0..count {
+            let at = queue_text[from..].find(&format!("\"{concept}\"")).unwrap() + from;
+            let state_at = queue_text[at..].find("\"state\": \"open\"").unwrap() + at;
+            queue_text.replace_range(
+                state_at..state_at + "\"state\": \"open\"".len(),
+                "\"state\": \"done\"",
+            );
+            from = state_at + 1;
+        }
+    }
+    std::fs::write(&queue_path, queue_text).unwrap();
+    std::fs::remove_file(dir.join("concepts/c.md")).unwrap();
+    let second = run_pass(
+        &dir,
+        "2026-11-22T00:00:00Z",
+        &PerishablesAuditor::default(),
+        Mode::DryRun,
+    )
+    .unwrap();
+    let reopened = second
+        .queue
+        .iter()
+        .find(|item| item.concept == "concepts/b.md" && item.reason == NO_REVIEW_DATE)
+        .expect("the still-raised done item returns to the queue");
+    assert_eq!(reopened.state, QueueState::Open);
+    assert_eq!(reopened.first_raised, first.run_id);
+    assert!(
+        !second
+            .queue
+            .iter()
+            .any(|item| item.concept == "concepts/c.md"),
+        "the cleared concept leaves no item behind"
+    );
+    assert_eq!(second.closed, 0, "a done item leaves uncounted");
+}
+
+#[test]
 fn an_applying_pass_leaves_exactly_its_state_files_and_no_temporaries() {
     // The fourteenth register's observable contract. The
     // engine's state files are written through a temporary and
