@@ -38,7 +38,9 @@ use std::path::Path;
 
 use crate::auditor::Severity;
 use crate::json::{Json, Parsed, parse};
-use crate::queue::{DEFINITION_DRIFT, QueueItem, QueueState, sort_queue, write_durably};
+use crate::queue::{
+    DEFINITION_DRIFT, QueueItem, QueueState, evidence_json, sort_queue, write_durably,
+};
 use crate::sha256::sha256_hex;
 use crate::time::parse_timestamp;
 use crate::upkeep::{Mode, merge_queue};
@@ -1019,15 +1021,7 @@ fn finding_json(finding: &DriftFinding) -> Json {
 fn queue_item_json(item: &QueueItem) -> Json {
     Json::obj(vec![
         ("concept", Json::Str(item.concept.clone())),
-        (
-            "evidence",
-            Json::Obj(
-                item.evidence
-                    .iter()
-                    .map(|(k, v)| (k.clone(), Json::Str(v.clone())))
-                    .collect(),
-            ),
-        ),
+        ("evidence", evidence_json(&item.evidence)),
         ("first_raised", Json::Str(item.first_raised.clone())),
         ("last_confirmed", Json::Str(item.last_confirmed.clone())),
         ("priority", Json::Int(item.priority as i64)),
