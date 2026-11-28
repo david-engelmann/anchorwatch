@@ -26,7 +26,7 @@ use crate::json::{Json, Parsed, parse};
 use crate::queue::{
     ATTESTATION_DEFECT, INDEX_DRIFT, LAPSED_VERIFICATION, MALFORMED_VERIFICATION, NO_REVIEW_DATE,
     PROVENANCE_GAP, QueueItem, QueueState, REGISTRY_DRIFT, STALE, SUPERSESSION_DEFECT, TIER_DROP,
-    TYPE_MISSING, sort_queue, write_durably,
+    TYPE_MISSING, evidence_json, sort_queue, write_durably,
 };
 use crate::sha256::sha256_hex;
 use crate::time::parse_timestamp;
@@ -215,15 +215,7 @@ fn finding_json(finding: &Finding) -> Json {
 fn queue_item_json(item: &QueueItem) -> Json {
     Json::obj(vec![
         ("concept", Json::Str(item.concept.clone())),
-        (
-            "evidence",
-            Json::Obj(
-                item.evidence
-                    .iter()
-                    .map(|(k, v)| (k.clone(), Json::Str(v.clone())))
-                    .collect(),
-            ),
-        ),
+        ("evidence", evidence_json(&item.evidence)),
         ("first_raised", Json::Str(item.first_raised.clone())),
         ("last_confirmed", Json::Str(item.last_confirmed.clone())),
         ("priority", Json::Int(item.priority as i64)),

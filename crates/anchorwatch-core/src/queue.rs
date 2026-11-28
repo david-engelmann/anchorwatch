@@ -10,7 +10,10 @@
 //! an item to done only on observed evidence; a human or agent moves
 //! it to waived, with the waiver recorded in the queue file itself.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+use crate::json::Json;
 
 /// Writes one of the engine's own state files durably: the
 /// content lands in a sibling temporary first and is renamed
@@ -31,6 +34,28 @@ pub(crate) fn write_durably(path: &Path, content: &str) -> std::io::Result<()> {
         return Err(error);
     }
     Ok(())
+}
+
+/// Renders an item's evidence pairs as a JSON object. A key an
+/// item carries more than once, as the claim registry's
+/// aggregated item carries one kind pair per direction it
+/// failed, keeps every value, joined in the order the pairs
+/// stand, so the rendered item names everything it was raised
+/// for. A key carried once renders exactly as it did before.
+pub(crate) fn evidence_json(evidence: &[(String, String)]) -> Json {
+    let mut map: BTreeMap<String, Json> = BTreeMap::new();
+    for (key, value) in evidence {
+        match map.get_mut(key) {
+            Some(Json::Str(joined)) => {
+                joined.push_str(", ");
+                joined.push_str(value);
+            }
+            _ => {
+                map.insert(key.clone(), Json::Str(value.clone()));
+            }
+        }
+    }
+    Json::Obj(map)
 }
 
 /// Reason code for a passed `stale_after`.

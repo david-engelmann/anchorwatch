@@ -367,6 +367,49 @@ fn a_claim_registry_is_checked_against_the_bundle() {
 }
 
 #[test]
+fn an_aggregated_registry_item_renders_every_kind_it_was_raised_for() {
+    // The forty-seventh register's pin. The registry aggregation
+    // builds one item per claim id with one kind pair per
+    // direction it failed, and the queue renderers collect
+    // evidence pairs into a keyed object, where a repeated key
+    // kept only its last value: the rendered item named one
+    // defect of the three it was raised for. The renderers now
+    // join a repeated key's values in the order they stand.
+    let dir = fixture("registry-kinds");
+    write_file(
+        &dir,
+        "claims.json",
+        "{\"claims\": [{\"id\": \"claim-x\", \"concept\": \"concepts/gone.md\"}, {\"id\": \"claim-x\", \"concept\": \"concepts/b.md\", \"supersedes\": [\"claim-9\"]}]}",
+    );
+    let report = run_pass(
+        &dir,
+        "2026-11-21T00:00:00Z",
+        &PerishablesAuditor::default(),
+        Mode::Apply,
+    )
+    .unwrap();
+    let drift: Vec<&anchorwatch_core::queue::QueueItem> = report
+        .queue
+        .iter()
+        .filter(|item| item.reason == REGISTRY_DRIFT)
+        .collect();
+    assert_eq!(drift.len(), 1, "drift items: {drift:?}");
+    assert_eq!(drift[0].concept, "claim-x");
+    assert_eq!(drift[0].priority, 1);
+    let kinds = "\"kind\": \"dangling_concept, duplicate_id, dangling_edge\"";
+    assert!(
+        report.to_json().contains(kinds),
+        "the report renders every kind: {}",
+        report.to_json()
+    );
+    let written = std::fs::read_to_string(dir.join(".recension").join("queue.json")).unwrap();
+    assert!(
+        written.contains(kinds),
+        "the written queue renders every kind: {written}"
+    );
+}
+
+#[test]
 fn a_near_miss_registry_is_named_not_passed_over() {
     // Register R1-04. A file whose claims entries fail the entry
     // shape was silently no candidate at all, so the pass said
